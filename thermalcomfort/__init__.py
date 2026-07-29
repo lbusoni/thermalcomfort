@@ -30,10 +30,18 @@ __all__ = [
     "ThermalComfortSystem",
     "Location",
     "ComfortParams",
+    "ClimateAnalysis",
 ]
 
 # Convenience alias
 Location = LocationInfo
+
+# Lazy import to avoid circular dependency
+def __getattr__(name):
+    if name == "ClimateAnalysis":
+        from .climate import ClimateAnalysis as _CA
+        return _CA
+    raise AttributeError(f"module 'thermalcomfort' has no attribute {name!r}")
 
 
 class ThermalComfortSystem:
@@ -164,51 +172,26 @@ class ThermalComfortSystem:
         local_tz: Optional[str] = None,
         show: bool = True,
     ):
-        """Fetch reanalysis (ERA5) and forecast data and compare them.
+        """Fetch reanalysis (ERA5) and forecast model output and compare them.
 
-        The 'forecast' is the Open-Meteo forecast model output for the same
-        period; the 'actual' is the ERA5 reanalysis archive.  This shows the
-        typical forecast error you can expect.
+        'actual' = ERA5 reanalysis (archive endpoint, ground truth).
+        'forecast' = Open-Meteo forecast model output for the same past dates
+          (using the forecast endpoint with past_days).
 
-        Note: both data sources are available only for past dates that are
-        within the Open-Meteo archive (roughly the last 3 months via the
-        forecast endpoint).
+        Both sources are available for roughly the last 92 days.
         """
-        from .providers.open_meteo import OpenMeteoProvider
+        from .providers.forecast_model import ForecastModelProvider
 
         start_ts = _parse_ts(start)
         end_ts = _parse_ts(end)
 
-        # ERA5 archive — treated as ground truth
-        archive_provider = OpenMeteoProvider()
-        archive_cache = FileCache(archive_provider, None)
-        actual_raw = archive_cache.get(location, start_ts, end_ts)
+        # ERA5 archive — treated as ground truth (uses the shared cache)
+        actual_raw = self._cache.get(location, start_ts, end_ts)
         actual = calculate_comfort(actual_raw, location.lat, location.lon, params)
 
-        # Forecast model output for the same period (past_days parameter)
-        from .providers.open_meteo import FORECAST_URL, HOURLY_VARIABLES
-        import requests
-
-        today = pd.Timestamp.now("UTC").normalize()
-        past_days = (today - start_ts).days + 1
-
-        resp = requests.get(
-            FORECAST_URL,
-            params={
-                "latitude": location.lat,
-                "longitude": location.lon,
-                "hourly": ",".join(HOURLY_VARIABLES),
-                "timezone": "UTC",
-                "wind_speed_unit": "ms",
-                "past_days": min(past_days, 92),
-                "forecast_days": 1,
-                "models": "ecmwf_ifs025",
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        forecast_raw = OpenMeteoProvider._get_and_parse(resp.json())  # type: ignore[attr-defined]
-        forecast_raw = forecast_raw[(forecast_raw.index >= start_ts) & (forecast_raw.index <= end_ts)]
+        # Forecast model output — separate cache (different provider)
+        forecast_cache = FileCache(ForecastModelProvider(), None)
+        forecast_raw = forecast_cache.get(location, start_ts, end_ts)
         forecast = calculate_comfort(forecast_raw, location.lat, location.lon, params)
 
         return plot_forecast_vs_actual(
