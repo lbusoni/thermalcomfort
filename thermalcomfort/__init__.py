@@ -17,6 +17,7 @@ import pandas as pd
 
 from .cache import FileCache
 from .comfort.indices import ComfortParams, calculate_comfort
+from .locations import LOCATIONS, get_known_location, known_location_names
 from .providers.base import LocationInfo
 from .providers.open_meteo import OpenMeteoProvider
 from .viz import (
@@ -31,6 +32,9 @@ __all__ = [
     "Location",
     "ComfortParams",
     "ClimateAnalysis",
+    "LOCATIONS",
+    "get_known_location",
+    "known_location_names",
 ]
 
 # Convenience alias

@@ -13,6 +13,7 @@ Subcommands
     rank        Rank predefined or given locations by comfort
     map         Build an interactive HTML map for a timestamp
     forecast    Forecast vs actual comparison plot
+    locations   Print predefined known locations
 """
 
 from __future__ import annotations
@@ -60,14 +61,26 @@ MAP_VARIABLE_CHOICES = [
 # ---------------------------------------------------------------------------
 
 def _parse_location(s: str):
-    """Accept 'Name:lat,lon' or 'lat,lon'."""
+    """Accept 'Name:lat,lon' or 'lat,lon' or a known location key."""
     from thermalcomfort.providers.base import LocationInfo
+    from thermalcomfort.locations import get_known_location, known_location_names
+
     if ":" in s:
         name, coords = s.split(":", 1)
         lat, lon = coords.split(",")
         return LocationInfo(float(lat), float(lon), name.strip())
+
     parts = s.split(",")
-    return LocationInfo(float(parts[0]), float(parts[1]))
+    if len(parts) == 2:
+        return LocationInfo(float(parts[0]), float(parts[1]))
+
+    try:
+        return get_known_location(s)
+    except KeyError as exc:
+        preview = ", ".join(known_location_names()[:8])
+        raise ValueError(
+            f"Unknown location {s!r}. Use 'Name:lat,lon', 'lat,lon', or one of the known names (e.g. {preview})."
+        ) from exc
 
 
 def _parse_ts(s: str) -> pd.Timestamp:
@@ -420,6 +433,15 @@ def cmd_forecast(args):
         plt.show()
 
 
+def cmd_locations(args):
+    from thermalcomfort.locations import LOCATIONS
+
+    print(f"Known locations ({len(LOCATIONS)}):")
+    for name in sorted(LOCATIONS):
+        loc = LOCATIONS[name]
+        print(f"- {name}:{loc.lat:.4f},{loc.lon:.4f}")
+
+
 # ---------------------------------------------------------------------------
 # Shared print helper
 # ---------------------------------------------------------------------------
@@ -482,13 +504,13 @@ def main() -> None:
 
     # ── show ──────────────────────────────────────────────────────────
     p_show = sub.add_parser("show", help="Plot time-series for one location")
-    p_show.add_argument("location", help="'Name:lat,lon' or 'lat,lon'")
+    p_show.add_argument("location", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict'")
     _add_common(p_show)
     p_show.add_argument("--no-display", action="store_true")
 
     # ── compare ───────────────────────────────────────────────────────
     p_cmp = sub.add_parser("compare", help="Compare multiple locations")
-    p_cmp.add_argument("locations", nargs="+", help="'Name:lat,lon' …")
+    p_cmp.add_argument("locations", nargs="+", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict' …")
     _add_common(p_cmp)
     p_cmp.add_argument(
         "--variable",
@@ -501,12 +523,12 @@ def main() -> None:
 
     # ── summary ───────────────────────────────────────────────────────
     p_sum = sub.add_parser("summary", help="UTCI distribution for a period")
-    p_sum.add_argument("location", help="'Name:lat,lon' or 'lat,lon'")
+    p_sum.add_argument("location", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict'")
     _add_common(p_sum)
 
     # ── climate ───────────────────────────────────────────────────────
     p_cli = sub.add_parser("climate", help="Climatological monthly profile")
-    p_cli.add_argument("location", help="'Name:lat,lon' or 'lat,lon'")
+    p_cli.add_argument("location", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict'")
     _add_common(p_cli, dates=False)
     _add_climate_args(p_cli)
     p_cli.add_argument("--month", default=None, metavar="1-12",
@@ -514,14 +536,14 @@ def main() -> None:
 
     # ── rank ──────────────────────────────────────────────────────────
     p_rank = sub.add_parser("rank", help="Rank locations by comfort")
-    p_rank.add_argument("locations", nargs="+", help="'Name:lat,lon' …")
+    p_rank.add_argument("locations", nargs="+", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict' …")
     _add_common(p_rank, dates=False)
     _add_climate_args(p_rank)
     p_rank.add_argument("--month", default=None, metavar="1-12")
 
     # ── map ───────────────────────────────────────────────────────────
     p_map = sub.add_parser("map", help="Interactive/static comfort map")
-    p_map.add_argument("locations", nargs="+", help="'Name:lat,lon' …")
+    p_map.add_argument("locations", nargs="+", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict' …")
     p_map.add_argument("--datetime", default=None, metavar="DATETIME",
                        help="UTC datetime to display (default: now)")
     _add_common(p_map, dates=False)
@@ -561,7 +583,7 @@ def main() -> None:
 
     # ── forecast ──────────────────────────────────────────────────────
     p_fcast = sub.add_parser("forecast", help="Forecast vs actual comparison")
-    p_fcast.add_argument("location", help="'Name:lat,lon' or 'lat,lon'")
+    p_fcast.add_argument("location", help="'Name:lat,lon' or 'lat,lon' or 'NameInDict'")
     _add_common(p_fcast)
     p_fcast.add_argument(
         "--variable",
@@ -569,6 +591,9 @@ def main() -> None:
         choices=COMMON_VARIABLE_CHOICES,
         help="Variable for forecast-vs-actual comparison",
     )
+
+    # ── locations ─────────────────────────────────────────────────────
+    sub.add_parser("locations", help="Print predefined known locations")
 
     args = parser.parse_args()
 
@@ -585,6 +610,7 @@ def main() -> None:
         "map":      cmd_map,
         "calc":     cmd_calc,
         "forecast": cmd_forecast,
+        "locations": cmd_locations,
     }
     dispatch[args.cmd](args)
 

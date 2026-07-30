@@ -16,6 +16,13 @@ python -m thermalcomfort <subcommand> [options]
 
 - `"Name:lat,lon"` (recommended)
 - `"lat,lon"`
+- `"NameInDict"` (for example `Firenze`, `Roma`, `Tokyo`)
+
+Known locations can be listed with:
+
+```bash
+thermalcomfort locations
+```
 
 ## Common options
 
