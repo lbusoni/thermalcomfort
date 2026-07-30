@@ -290,6 +290,110 @@ def cmd_map(args):
         print(f"Map saved to {path}")
 
 
+def cmd_calc(args):
+    """Calculate all comfort indices from directly supplied meteorological values."""
+    import numpy as np
+    from pythermalcomfort.models import (
+        heat_index_rothfusz,
+        solar_gain,
+        utci,
+        wind_chill_temperature,
+    )
+    from pythermalcomfort.utilities import v_relative
+
+    from thermalcomfort.comfort.indices import (
+        ACTIVITY_MET,
+        ALPHA_SW,
+        MIN_WIND_SPEED,
+        UTCI_CATEGORIES,
+        _wet_bulb_stull,
+        _wbgt_outdoor,
+    )
+
+    ta  = args.temp
+    rh  = args.rh
+    ws  = args.wind
+
+    # ── Mean Radiant Temperature ──────────────────────────────────────
+    if args.mrt is not None:
+        mrt = args.mrt
+        mrt_note = "provided directly"
+    elif args.solar is not None:
+        sg = solar_gain(
+            sol_altitude=args.solar_elevation,
+            sharp=90.0,
+            sol_radiation_dir=args.solar,
+            sol_transmittance=1.0,
+            f_svv=1.0,
+            f_bes=args.sun,
+            asw=ALPHA_SW,
+            posture="standing",
+            round_output=False,
+        )
+        mrt = ta + float(sg.delta_mrt)
+        mrt_note = f"from solar gain (DNI={args.solar} W/m², elev={args.solar_elevation}°)"
+    else:
+        mrt = ta
+        mrt_note = "= Ta  (shade / no solar data)"
+
+    # ── Activity ──────────────────────────────────────────────────────
+    met = ACTIVITY_MET[args.activity] if args.activity in ACTIVITY_MET else float(args.activity)
+    act_label = f"{args.activity} ({met} MET)"
+
+    # ── UTCI ──────────────────────────────────────────────────────────
+    ws_eff = max(ws, MIN_WIND_SPEED)
+    vr = float(v_relative(v=ws_eff, met=met))
+    utci_res = utci(tdb=ta, tr=mrt, v=vr, rh=rh, limit_inputs=False, round_output=False)
+    utci_val = float(utci_res.utci)
+
+    category = next(
+        (label for label, (lo, hi) in UTCI_CATEGORIES.items() if lo <= utci_val < hi),
+        "unknown",
+    )
+
+    # ── Heat Index ────────────────────────────────────────────────────
+    if ta >= 27.0 and rh >= 40.0:
+        hi_res = heat_index_rothfusz(tdb=ta, rh=rh, round_output=False)
+        hi_str = f"{float(hi_res.hi):.1f} °C"
+    else:
+        hi_str = "n/a  (requires T ≥ 27 °C and RH ≥ 40 %)"
+
+    # ── Wind Chill ────────────────────────────────────────────────────
+    if ta <= 10.0 and ws >= 1.3:
+        wc_res = wind_chill_temperature(tdb=ta, v=ws, round_output=False)
+        wc_str = f"{float(wc_res.wct):.1f} °C"
+    else:
+        wc_str = "n/a  (requires T ≤ 10 °C and wind ≥ 1.3 m/s)"
+
+    # ── Wet-bulb + WBGT ──────────────────────────────────────────────
+    ta_a  = np.array([ta])
+    rh_a  = np.array([rh])
+    mrt_a = np.array([mrt])
+    twb  = float(_wet_bulb_stull(ta_a, rh_a)[0])
+    wbgt = float(_wbgt_outdoor(ta_a, rh_a, mrt_a)[0])
+
+    # ── Print ─────────────────────────────────────────────────────────
+    SEP = "─" * 58
+    print(f"\n{SEP}")
+    print("  Input conditions")
+    print(SEP)
+    print(f"  Air temperature:      {ta:.1f} °C")
+    print(f"  Relative humidity:    {rh:.0f} %")
+    print(f"  Wind speed (10 m):    {ws:.1f} m/s")
+    print(f"  Mean radiant temp:    {mrt:.1f} °C  ({mrt_note})")
+    print(f"  Activity:             {act_label}")
+    print(f"  Sun exposure:         {args.sun}")
+    print(f"\n{SEP}")
+    print("  Comfort indices")
+    print(SEP)
+    print(f"  UTCI:                 {utci_val:.1f} °C  →  {category}")
+    print(f"  Heat Index (NOAA):    {hi_str}")
+    print(f"  Wind Chill (NWS):     {wc_str}")
+    print(f"  WBGT outdoor:         {wbgt:.1f} °C")
+    print(f"  Wet-bulb (Stull):     {twb:.1f} °C")
+    print(f"{SEP}\n")
+
+
 def cmd_forecast(args):
     import matplotlib
     if args.output:
@@ -430,6 +534,31 @@ def main() -> None:
     p_map.add_argument("--static", action="store_true",
                        help="Static matplotlib map instead of interactive HTML")
 
+    # ── calc ──────────────────────────────────────────────────────────
+    p_calc = sub.add_parser(
+        "calc",
+        help="Calculate comfort indices from direct meteorological parameters (no database)",
+    )
+    p_calc.add_argument("--temp", "-T", type=float, required=True, metavar="°C",
+                        help="Air temperature (°C)")
+    p_calc.add_argument("--rh",   "-H", type=float, required=True, metavar="%",
+                        help="Relative humidity (%%)")
+    p_calc.add_argument("--wind", "-W", type=float, required=True, metavar="m/s",
+                        help="Wind speed at 10 m height (m/s)")
+    p_calc.add_argument("--mrt",  type=float, default=None, metavar="°C",
+                        help="Mean Radiant Temperature (°C). "
+                             "Defaults to air temperature (shade assumption).")
+    p_calc.add_argument("--solar", type=float, default=None, metavar="W/m²",
+                        help="Direct Normal Irradiance (W/m²) — alternative way to estimate MRT.")
+    p_calc.add_argument("--solar-elevation", type=float, default=45.0, metavar="deg",
+                        help="Solar elevation angle in degrees, used with --solar (default: 45).")
+    p_calc.add_argument("--activity", default="walking",
+                        choices=["resting", "seated", "standing", "walking",
+                                 "walking_fast", "hiking", "cycling"],
+                        help="Activity level (default: walking)")
+    p_calc.add_argument("--sun", type=float, default=0.5, metavar="0-1",
+                        help="Sun exposure fraction 0=shade … 1=full sun (default: 0.5)")
+
     # ── forecast ──────────────────────────────────────────────────────
     p_fcast = sub.add_parser("forecast", help="Forecast vs actual comparison")
     p_fcast.add_argument("location", help="'Name:lat,lon' or 'lat,lon'")
@@ -454,6 +583,7 @@ def main() -> None:
         "climate":  cmd_climate,
         "rank":     cmd_rank,
         "map":      cmd_map,
+        "calc":     cmd_calc,
         "forecast": cmd_forecast,
     }
     dispatch[args.cmd](args)
