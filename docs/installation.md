@@ -1,37 +1,32 @@
-# Installazione
+# Installation
 
-## Requisiti
+## Requirements
 
-- Python 3.11+ (consigliato 3.12)
+- Python 3.11+ (3.12 recommended)
 
-## Install standard
+## Standard installation
 
-Da root del repository:
+From the repository root:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Questo comando installa:
+This installs runtime dependencies and the local `thermalcomfort` package.
 
-1. dipendenze runtime
-2. package locale `thermalcomfort` (`-e .`)
-
-In questo modo il notebook non fallisce con `ModuleNotFoundError: thermalcomfort`.
-
-## Alternative
+## Alternative installation commands
 
 ```bash
 pip install -e .
 ```
 
-oppure:
+or:
 
 ```bash
 pip install .
 ```
 
-## Verifica installazione
+## Verify installation
 
 ```bash
 python -c "from thermalcomfort import ThermalComfortSystem; print('ok')"
@@ -39,14 +34,11 @@ python -c "from thermalcomfort import ThermalComfortSystem; print('ok')"
 
 ## Notebook
 
-Notebook consigliato: `examples/interactive.ipynb`
+Recommended notebook:
 
-La prima cella gestisce automaticamente:
+- `examples/interactive.ipynb`
 
-- backend matplotlib widget con fallback inline
-- aggiunta del root progetto a `sys.path` quando il notebook gira da `examples/`
-
-## Documentazione locale (MkDocs)
+## Build docs locally
 
 ```bash
 pip install -r docs/requirements.txt

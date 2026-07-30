@@ -1,17 +1,20 @@
 # Thermal Comfort Visualization System
 
-Documentazione completa del progetto.
+This site contains the full technical and operational documentation.
 
-## Cosa fa
+## What this project provides
 
-- Calcola comfort termico outdoor con **UTCI** (indice principale)
-- Calcola anche Heat Index, Wind Chill, WBGT outdoor
-- Supporta serie temporali, confronti tra città, mappe e climatologia
-- Supporta confronto forecast-vs-actual
+- Outdoor thermal comfort analysis based on **UTCI** (primary index)
+- Secondary indices: Heat Index, Wind Chill, WBGT (outdoor approximation)
+- Hourly time-series and multi-location comparison workflows
+- Interactive and static map outputs
+- Multi-year climatology and location ranking
+- Forecast-vs-actual analysis
 
-## Dove guardare
+## Documentation sections
 
-- [Installazione](installation.md)
-- [Modello fisico e sorgenti dati](concepts.md)
+- [Installation](installation.md)
+- [Physical model and data sources](concepts.md)
+- [Sampling, interpolation, and provenance](sampling.md)
 - [CLI reference](cli.md)
 - [Python API reference](python-api.md)

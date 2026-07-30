@@ -10,19 +10,19 @@ from thermalcomfort import ThermalComfortSystem, Location, ComfortParams
 
 ### `Location`
 
-Alias di `LocationInfo(lat, lon, name="")`.
+Alias for `LocationInfo(lat, lon, name="")`.
 
-Esempio:
+Example:
 
 ```python
-firenze = Location(43.7696, 11.2558, "Firenze")
+florence = Location(43.7696, 11.2558, "Florence")
 ```
 
 ### `ComfortParams`
 
 ```python
 ComfortParams(
-    activity="walking",     # oppure MET float
+    activity="walking",     # or custom MET float
     sun_exposure=0.5,       # 0..1
     posture="standing",     # "standing"|"sitting"
 )
@@ -32,7 +32,7 @@ ComfortParams(
 
 ```python
 df = tcs.get(
-    location=firenze,
+    location=florence,
     start="2024-07-01",
     end="2024-07-03 23:00",
     params=ComfortParams(activity="walking", sun_exposure=0.5),
@@ -40,14 +40,14 @@ df = tcs.get(
 )
 ```
 
-Parametri:
+Parameters:
 
 - `location`: `Location`
 - `start`, `end`: `str | pd.Timestamp`
 - `params`: `ComfortParams | None`
-- `raw`: `bool` (se `True`, niente indici di comfort)
+- `raw`: `bool` (`True` returns weather variables only)
 
-Output (`raw=False`): DataFrame con colonne meteo +:
+Output (`raw=False`): DataFrame with weather columns plus:
 
 - `mrt`
 - `utci`
@@ -56,11 +56,14 @@ Output (`raw=False`): DataFrame con colonne meteo +:
 - `wind_chill`
 - `wbgt_outdoor`
 
+The returned index is hourly and UTC-aware. No extra temporal interpolation is
+performed by the application when fetching weather data.
+
 ### `compare(...)`
 
 ```python
 tcs.compare(
-    [firenze, livorno],
+    [florence, livorno],
     start="2024-07-01",
     end="2024-07-03 23:00",
     variable="utci",
@@ -72,15 +75,15 @@ tcs.compare(
 
 ### `plot(...)`
 
-Dashboard serie temporale singola località.
+Single-location time-series dashboard.
 
 ### `plot_summary(...)`
 
-Distribuzione categorie UTCI.
+UTCI category distribution plot.
 
 ### `plot_forecast_vs_actual(...)`
 
-Confronta output modello forecast con reanalisi storica.
+Compares forecast model output against historical reanalysis.
 
 ---
 
@@ -100,17 +103,17 @@ ca = ClimateAnalysis(start_year=2010, end_year=2023)
 
 ### `monthly_stats(location, params=None, daytime_only=True, progress_callback=None)`
 
-Ritorna DataFrame indicizzato per mese con:
+Returns a month-indexed DataFrame with:
 
 - `utci_mean`, `utci_std`
 - `temp_mean`, `temp_std`
 - `no_stress_frac`, `heat_stress_frac`, `cold_stress_frac`
 
-Esempio:
+Example:
 
 ```python
 stats = ca.monthly_stats(
-    location=firenze,
+    location=florence,
     params=ComfortParams(activity="walking", sun_exposure=0.5),
     daytime_only=True,
 )
@@ -119,39 +122,46 @@ print(stats)
 
 ### `hourly_profile(location, month, params=None, progress_callback=None)`
 
-Ritorna DataFrame (ore 0..23) con:
+Returns a DataFrame (hours 0..23) with:
 
 - `utci_mean`, `utci_p25`, `utci_p75`
 - `temp_mean`, `rh_mean`, `wind_mean`
 
-Esempio:
+Example:
 
 ```python
-profile = ca.hourly_profile(firenze, month=7, params=ComfortParams())
+profile = ca.hourly_profile(florence, month=7, params=ComfortParams())
 print(profile.head())
 ```
 
 ### `rank_locations(locations, month=None, params=None, daytime_only=True, progress_callback=None)`
 
-Ritorna DataFrame con ranking per comfort:
+Returns a ranking DataFrame with:
 
 - `location`
 - `utci_mean`, `utci_std`
 - `no_stress_frac`
 - `heat_stress_frac`, `cold_stress_frac`
 
-Esempio:
+Example:
 
 ```python
 ranking = ca.rank_locations(
-    [firenze, livorno, roma],
+    [florence, livorno, rome],
     month=4,
     params=ComfortParams(activity="walking"),
 )
 print(ranking)
 ```
 
-### Plot climatologici
+Where `livorno` and `rome` are `Location(...)` objects, for example:
+
+```python
+livorno = Location(43.5485, 10.3106, "Livorno")
+rome = Location(41.9028, 12.4964, "Rome")
+```
+
+### Climatology plotting helpers
 
 - `plot_monthly(location, params=None, show=True, progress_callback=None)`
 - `plot_hourly_profile(location, month, params=None, show=True, progress_callback=None)`
@@ -159,7 +169,7 @@ print(ranking)
 
 ---
 
-## Variabili plottabili consigliate
+## Recommended plottable variables
 
 - `utci`
 - `temperature_2m`

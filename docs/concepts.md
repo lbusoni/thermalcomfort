@@ -1,55 +1,54 @@
-# Modello fisico e sorgenti dati
+# Physical model and data sources
 
-## Indice principale: UTCI
+## Primary index: UTCI
 
-UTCI (Universal Thermal Climate Index) usa:
+UTCI (Universal Thermal Climate Index) is the main comfort metric.
+It combines:
 
-- temperatura aria (`temperature_2m`)
-- umidità relativa (`relative_humidity_2m`)
-- velocità vento (`wind_speed_10m`)
-- temperatura radiante media (MRT)
+- air temperature (`temperature_2m`)
+- relative humidity (`relative_humidity_2m`)
+- wind speed (`wind_speed_10m`)
+- mean radiant temperature (MRT)
 
-Output:
+Outputs:
 
-- `utci` (°C equivalente)
-- `utci_category` (categoria di stress termico)
+- `utci` (equivalent temperature in °C)
+- `utci_category` (thermal stress category)
 
-## Indici secondari
+## Secondary indices
 
-- `heat_index` (Rothfusz/NOAA, caldo-umido)
-- `wind_chill` (freddo-ventoso)
-- `wbgt_outdoor` (stima semplificata)
+- `heat_index` (Rothfusz/NOAA, hot-humid conditions)
+- `wind_chill` (cold-windy conditions)
+- `wbgt_outdoor` (simplified outdoor approximation)
 
-## Parametri fisiologici/scenario
+## Scenario parameters (`ComfortParams`)
 
-Classe `ComfortParams`:
+- `activity`: preset or custom MET value  
+  Valid presets: `resting`, `seated`, `standing`, `walking`, `walking_fast`, `hiking`, `cycling`
+- `sun_exposure`: float in `[0, 1]` (0 = full shade, 1 = full sun)
+- `posture`: `standing` or `sitting`
 
-- `activity`: preset oppure valore MET
-  - preset validi: `resting`, `seated`, `standing`, `walking`, `walking_fast`, `hiking`, `cycling`
-- `sun_exposure`: frazione 0..1 (0=ombra piena, 1=pieno sole)
-- `posture`: `standing` o `sitting`
+## MRT estimation
 
-## MRT
+MRT is estimated from:
 
-MRT stimata via:
+- solar geometry (`pvlib`)
+- direct and diffuse radiation from Open-Meteo
+- `solar_gain` model from `pythermalcomfort`
 
-- posizione solare (`pvlib`)
-- radiazione diretta/diffusa (Open-Meteo)
-- modello `solar_gain` di `pythermalcomfort`
-
-## Sorgenti dati
+## Weather data sources
 
 ### Open-Meteo Archive API
 
-- endpoint: `https://archive-api.open-meteo.com/v1/archive`
-- usata come base storica/reanalisi
+- Endpoint: `https://archive-api.open-meteo.com/v1/archive`
+- Used for historical/reanalysis data
 
 ### Open-Meteo Forecast API
 
-- endpoint: `https://api.open-meteo.com/v1/forecast`
-- usata per previsioni e forecast-vs-actual (storico modello via `past_days`)
+- Endpoint: `https://api.open-meteo.com/v1/forecast`
+- Used for forecast data and forecast-vs-actual analysis
 
-## Variabili orarie ingestite
+## Hourly weather variables used
 
 - `temperature_2m`
 - `relative_humidity_2m`
@@ -61,6 +60,10 @@ MRT stimata via:
 - `precipitation`
 - `apparent_temperature`
 
-## Cache
+## Caching model
 
-Cache su parquet in `~/.thermalcomfort_cache`, con fetch incrementale (solo finestre mancanti).
+Weather data is cached as Parquet files under:
+
+- `~/.thermalcomfort_cache`
+
+Caching is incremental by time range: only missing hours are downloaded and merged.
