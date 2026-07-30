@@ -10,6 +10,7 @@ from .providers.base import LocationInfo
 
 LOCATIONS: dict[str, LocationInfo] = {
     "Firenze": LocationInfo(43.7696, 11.2558, "Firenze"),
+    "Fiesole": LocationInfo(43.8069, 11.2926, "Fiesole"),
     "Livorno": LocationInfo(43.5485, 10.3106, "Livorno"),
     "Borgo San Lorenzo": LocationInfo(43.9543, 11.3882, "Borgo San Lorenzo"),
     "Maresca": LocationInfo(44.0533, 10.8488, "Maresca"),
@@ -28,6 +29,7 @@ LOCATIONS: dict[str, LocationInfo] = {
     "Berlino": LocationInfo(52.5200, 13.4050, "Berlino"),
     "Barcellona": LocationInfo(41.3851, 2.1734, "Barcellona"),
     "Minorca": LocationInfo(39.9380, 3.9602, "Minorca"),
+    "Porto": LocationInfo(41.1406, -8.6156, "Porto"),
     "Atene": LocationInfo(37.9838, 23.7275, "Atene"),
     "Creta": LocationInfo(35.5172, 24.0172, "Creta"),
     "Stoccolma": LocationInfo(59.3293, 18.0686, "Stoccolma"),
@@ -35,7 +37,10 @@ LOCATIONS: dict[str, LocationInfo] = {
     "Reykjavik": LocationInfo(64.1265, -21.8174, "Reykjavik"),
     "New York": LocationInfo(40.7128, -74.0060, "New York"),
     "Los Angeles": LocationInfo(34.0522, -118.2437, "Los Angeles"),
+    "Tucson": LocationInfo(32.2226, -110.9747, "Tucson"),
+    "LBT": LocationInfo(32.7015, -109.8892, "LBT"),
     "Città del Messico": LocationInfo(19.4326, -99.1332, "Città del Messico"),
+    "VLT": LocationInfo(-24.6275, -70.4043, "VLT"),
     "Buenos Aires": LocationInfo(-34.6037, -58.3816, "Buenos Aires"),
     "Città del Capo": LocationInfo(-33.9249, 18.4241, "Città del Capo"),
     "Dubai": LocationInfo(25.2048, 55.2708, "Dubai"),

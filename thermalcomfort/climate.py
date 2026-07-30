@@ -15,12 +15,47 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+try:
+    from timezonefinder import TimezoneFinder
+except ImportError:  # pragma: no cover - optional dependency
+    TimezoneFinder = None
+
 from .cache import FileCache
 from .comfort.indices import ACTIVITY_MET, UTCI_CATEGORIES, UTCI_COLORS, ComfortParams, calculate_comfort
 from .providers.base import LocationInfo
 from .providers.open_meteo import OpenMeteoProvider
 
+
+def _infer_timezone(location: Optional[LocationInfo] = None, timezone: Optional[str] = None) -> Optional[str]:
+    """Resolve the timezone for a location, preferring an explicit override."""
+    if timezone:
+        return timezone
+    if location is None or _TIMEZONE_FINDER is None:
+        return None
+    return _TIMEZONE_FINDER.timezone_at(lng=location.lon, lat=location.lat)
+
+
+def _filter_daytime_hours(
+    df: pd.DataFrame,
+    timezone: Optional[str] = None,
+    location: Optional[LocationInfo] = None,
+) -> pd.DataFrame:
+    """Keep hours between 07:00 and 19:00 in the requested local timezone."""
+    if df.empty:
+        return df
+
+    target_tz = _infer_timezone(location=location, timezone=timezone)
+    if target_tz is None:
+        return df[(df.index.hour >= 7) & (df.index.hour <= 19)]
+
+    local_df = df.copy()
+    local_df.index = local_df.index.tz_convert(target_tz)
+    local_hours = local_df.index.hour
+    return local_df[(local_hours >= 7) & (local_hours <= 19)]
+
 logger = logging.getLogger(__name__)
+
+_TIMEZONE_FINDER = TimezoneFinder() if TimezoneFinder is not None else None
 
 # Reference period used when none is specified
 DEFAULT_START_YEAR = 2010
@@ -63,6 +98,7 @@ class ClimateAnalysis:
         location: LocationInfo,
         params: Optional[ComfortParams] = None,
         daytime_only: bool = True,
+        timezone: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Return mean/std UTCI and temperature per calendar month.
@@ -86,7 +122,7 @@ class ClimateAnalysis:
         df = self._load_years(location, params, progress_callback=progress_callback)
 
         if daytime_only:
-            df = df[(df.index.hour >= 7) & (df.index.hour <= 19)]
+            df = _filter_daytime_hours(df, timezone=timezone, location=location)
 
         rows = []
         for month in range(1, 13):
@@ -115,6 +151,7 @@ class ClimateAnalysis:
         location: LocationInfo,
         month: int,
         params: Optional[ComfortParams] = None,
+        timezone: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Return mean comfort indices by hour-of-day for a specific month.
@@ -129,6 +166,10 @@ class ClimateAnalysis:
 
         df = self._load_years(location, params, progress_callback=progress_callback)
         month_df = df[df.index.month == month]
+        resolved_tz = _infer_timezone(location=location, timezone=timezone)
+        if resolved_tz is not None and not month_df.empty:
+            month_df = month_df.copy()
+            month_df.index = month_df.index.tz_convert(resolved_tz)
 
         rows = []
         for hour in range(24):
@@ -150,6 +191,7 @@ class ClimateAnalysis:
         month: Optional[int] = None,
         params: Optional[ComfortParams] = None,
         daytime_only: bool = True,
+        timezone: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Rank locations by how close their average UTCI is to 'no thermal stress'.
@@ -172,7 +214,7 @@ class ClimateAnalysis:
                 if month:
                     df = df[df.index.month == month]
                 if daytime_only:
-                    df = df[(df.index.hour >= 7) & (df.index.hour <= 19)]
+                    df = _filter_daytime_hours(df, timezone=timezone, location=loc)
                 utci = df["utci"].dropna()
                 cats = df["utci_category"]
                 rows.append({
@@ -252,14 +294,20 @@ class ClimateAnalysis:
         location: LocationInfo,
         month: int,
         params: Optional[ComfortParams] = None,
+        timezone: Optional[str] = None,
         show: bool = True,
         progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> plt.Figure:
         """Shaded mean ± IQR UTCI curve over a typical day for a given month."""
         profile = self.hourly_profile(
-            location, month=month, params=params, progress_callback=progress_callback
+            location,
+            month=month,
+            params=params,
+            timezone=timezone,
+            progress_callback=progress_callback,
         )
         hours = profile.index
+        resolved_tz = _infer_timezone(location=location, timezone=timezone)
 
         fig, ax = plt.subplots(figsize=(10, 4))
 
@@ -274,6 +322,7 @@ class ClimateAnalysis:
         ax.set_xlim(0, 23)
         ax.set_xticks(range(0, 24, 2))
         ax.set_xticklabels([f"{h:02d}:00" for h in range(0, 24, 2)], rotation=30)
+        ax.set_xlabel(f"Ora ({resolved_tz or timezone or 'UTC'})")
         ax.set_ylabel("°C")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)

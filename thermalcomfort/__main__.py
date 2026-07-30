@@ -206,9 +206,15 @@ def cmd_climate(args):
         print(f"\rLoading years: [{bar}] {i}/{total}  (year {year})", end="", flush=True)
 
     print(f"Computing climatology for {loc} ({args.start_year}–{args.end_year}) …")
-    stats = ca.monthly_stats(loc, params=params, progress_callback=_progress)
+    stats = ca.monthly_stats(
+        loc,
+        params=params,
+        timezone=args.tz,
+        progress_callback=_progress,
+    )
     print()
-    print("\n Monthly UTCI statistics (daytime hours, UTC):")
+    tz_label = args.tz or "local time"
+    print(f"\n Monthly UTCI statistics (daytime hours: 07:00–19:00, {tz_label})")
     print(stats.round(1).to_string())
 
     if args.month:
@@ -216,6 +222,7 @@ def cmd_climate(args):
             loc,
             int(args.month),
             params=params,
+            timezone=args.tz,
             show=False,
             progress_callback=_progress,
         )
@@ -249,7 +256,12 @@ def cmd_rank(args):
 
     month = int(args.month) if args.month else None
     print("Computing rankings …")
-    df = ca.rank_locations(locations, month=month, params=params)
+    df = ca.rank_locations(
+        locations,
+        month=month,
+        params=params,
+        timezone=args.tz,
+    )
     print("\n" + df.to_string())
 
     fig = ca.plot_rank(locations, month=month, params=params, show=False)
