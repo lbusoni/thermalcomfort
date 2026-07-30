@@ -48,7 +48,8 @@ tcs.plot(df, title="Florence")
 ### CLI
 
 ```bash
-python -m thermalcomfort show "Florence:43.7696,11.2558" --start 2024-07-01 --end 2024-07-03
+thermalcomfort show "Florence:43.7696,11.2558" --start 2024-07-01 --end 2024-07-03
+thermalcomfort calc --temp 25 --rh 60 --wind 2
 ```
 
 ---

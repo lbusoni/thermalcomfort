@@ -1,6 +1,12 @@
 # CLI reference
 
-Entry point:
+After `pip install`, the `thermalcomfort` command is available directly:
+
+```bash
+thermalcomfort <subcommand> [options]
+```
+
+Alternatively, the package can be invoked as a module:
 
 ```bash
 python -m thermalcomfort <subcommand> [options]
@@ -26,7 +32,7 @@ python -m thermalcomfort <subcommand> [options]
 Single-location time-series analysis.
 
 ```bash
-python -m thermalcomfort show "Florence:43.7696,11.2558" --start 2024-07-01 --end 2024-07-03
+thermalcomfort show "Florence:43.7696,11.2558" --start 2024-07-01 --end 2024-07-03
 ```
 
 Options:
@@ -42,7 +48,7 @@ Options:
 Multi-location comparison.
 
 ```bash
-python -m thermalcomfort compare "Florence:43.7696,11.2558" "Livorno:43.5485,10.3106" --variable utci
+thermalcomfort compare "Florence:43.7696,11.2558" "Livorno:43.5485,10.3106" --variable utci
 ```
 
 Options:
@@ -74,7 +80,7 @@ Options:
 UTCI category distribution over a period.
 
 ```bash
-python -m thermalcomfort summary "Rome:41.9028,12.4964" --start 2024-07-01 --end 2024-07-31
+thermalcomfort summary "Rome:41.9028,12.4964" --start 2024-07-01 --end 2024-07-31
 ```
 
 Options:
@@ -90,13 +96,13 @@ Options:
 Multi-year climatological profile.
 
 ```bash
-python -m thermalcomfort climate "Florence:43.7696,11.2558" --start-year 2010 --end-year 2023
+thermalcomfort climate "Florence:43.7696,11.2558" --start-year 2010 --end-year 2023
 ```
 
 Hourly profile for a specific month:
 
 ```bash
-python -m thermalcomfort climate "Florence:43.7696,11.2558" --start-year 2010 --end-year 2023 --month 7
+thermalcomfort climate "Florence:43.7696,11.2558" --start-year 2010 --end-year 2023 --month 7
 ```
 
 Options:
@@ -113,7 +119,7 @@ Options:
 Rank locations by climatological comfort.
 
 ```bash
-python -m thermalcomfort rank "Florence:43.7696,11.2558" "London:51.5074,-0.1278" --month 4
+thermalcomfort rank "Florence:43.7696,11.2558" "London:51.5074,-0.1278" --month 4
 ```
 
 Options:
@@ -130,7 +136,7 @@ Options:
 Map comfort at a given timestamp.
 
 ```bash
-python -m thermalcomfort map "Florence:43.7696,11.2558" "Rome:41.9028,12.4964" --datetime "2024-07-14 12:00"
+thermalcomfort map "Florence:43.7696,11.2558" "Rome:41.9028,12.4964" --datetime "2024-07-14 12:00"
 ```
 
 Options:
@@ -155,7 +161,7 @@ Options:
 Forecast-vs-actual comparison (historical window, typically up to ~92 days).
 
 ```bash
-python -m thermalcomfort forecast "Florence:43.7696,11.2558" --start 2026-07-15 --end 2026-07-25 --variable utci
+thermalcomfort forecast "Florence:43.7696,11.2558" --start 2026-07-15 --end 2026-07-25 --variable utci
 ```
 
 Options:
@@ -164,3 +170,47 @@ Options:
 - `--start`, `--end`
 - `--variable` uses the same valid values as `compare`
 - common options
+
+---
+
+## `calc`
+
+Calculate all comfort indices from directly supplied meteorological values —
+no internet access or database required.
+
+```bash
+thermalcomfort calc --temp 25 --rh 60 --wind 2
+```
+
+With explicit Mean Radiant Temperature:
+
+```bash
+thermalcomfort calc --temp 25 --rh 60 --wind 2 --mrt 45
+```
+
+With solar irradiance (MRT estimated automatically):
+
+```bash
+thermalcomfort calc --temp 25 --rh 60 --wind 2 --solar 800 --solar-elevation 60
+```
+
+Options:
+
+| Option | Short | Required | Description |
+|---|---|---|---|
+| `--temp` | `-T` | yes | Air temperature (°C) |
+| `--rh` | `-H` | yes | Relative humidity (%) |
+| `--wind` | `-W` | yes | Wind speed at 10 m height (m/s) |
+| `--mrt` | | no | Mean Radiant Temperature (°C). Default: = Ta (shade) |
+| `--solar` | | no | Direct Normal Irradiance (W/m²) — alternative MRT estimate |
+| `--solar-elevation` | | no | Solar elevation angle in degrees, used with `--solar` (default: 45) |
+| `--activity` | | no | Activity level (default: `walking`) |
+| `--sun` | | no | Sun exposure fraction 0–1 (default: 0.5) |
+
+MRT is determined in this priority order:
+
+1. `--mrt` if provided
+2. Estimated from `--solar` + `--solar-elevation` via the `solar_gain` model
+3. Default: MRT = Ta (full shade assumption)
+
+Indices reported: UTCI (+ stress category), Heat Index (NOAA Rothfusz, valid only for T ≥ 27 °C and RH ≥ 40 %), Wind Chill (NWS, valid only for T ≤ 10 °C and wind ≥ 1.3 m/s), WBGT outdoor, wet-bulb temperature (Stull 2011).
