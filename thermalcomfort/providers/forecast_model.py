@@ -8,7 +8,6 @@ This is useful for forecast-vs-actual comparisons.
 import logging
 
 import pandas as pd
-import requests
 
 from .base import LocationInfo, WeatherProvider
 from .open_meteo import HOURLY_VARIABLES, OpenMeteoProvider
@@ -56,7 +55,5 @@ class ForecastModelProvider(WeatherProvider):
             "forecast_days": min(forecast_days, 16),
         }
         logger.debug("Forecast-model fetch for %s", location)
-        resp = requests.get(FORECAST_URL, params=params, timeout=60)
-        resp.raise_for_status()
         df = OpenMeteoProvider._get_and_parse(FORECAST_URL, params)
         return df[(df.index >= start) & (df.index <= end)]

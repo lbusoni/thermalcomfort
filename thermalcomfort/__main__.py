@@ -18,10 +18,14 @@ Subcommands
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timezone
 
 import pandas as pd
+
+# Hide noisy informational Intel OpenMP runtime warnings (not computation errors).
+os.environ.setdefault("KMP_WARNINGS", "0")
 
 # ---------------------------------------------------------------------------
 # Argument helpers
@@ -144,8 +148,6 @@ def cmd_climate(args):
         matplotlib.use("Agg")
 
     from thermalcomfort.climate import ClimateAnalysis
-    from thermalcomfort.providers.base import LocationInfo
-
     loc = _parse_location(args.location)
     params_kw = dict(activity=args.activity, sun_exposure=args.sun)
     from thermalcomfort import ComfortParams
@@ -155,15 +157,34 @@ def cmd_climate(args):
         start_year=int(args.start_year),
         end_year=int(args.end_year),
     )
+
+    def _progress(i: int, total: int, year: int) -> None:
+        width = 24
+        filled = int(width * i / total)
+        bar = "█" * filled + "░" * (width - filled)
+        print(f"\rLoading years: [{bar}] {i}/{total}  (year {year})", end="", flush=True)
+
     print(f"Computing climatology for {loc} ({args.start_year}–{args.end_year}) …")
-    stats = ca.monthly_stats(loc, params=params)
+    stats = ca.monthly_stats(loc, params=params, progress_callback=_progress)
+    print()
     print("\n Monthly UTCI statistics (daytime hours, UTC):")
     print(stats.round(1).to_string())
 
     if args.month:
-        fig = ca.plot_hourly_profile(loc, int(args.month), params=params, show=False)
+        fig = ca.plot_hourly_profile(
+            loc,
+            int(args.month),
+            params=params,
+            show=False,
+            progress_callback=_progress,
+        )
     else:
-        fig = ca.plot_monthly(loc, params=params, show=False)
+        fig = ca.plot_monthly(
+            loc,
+            params=params,
+            show=False,
+            progress_callback=_progress,
+        )
 
     if args.output:
         fig.savefig(args.output, dpi=150, bbox_inches="tight")

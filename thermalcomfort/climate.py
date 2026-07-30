@@ -9,7 +9,7 @@ Answers questions such as:
 from __future__ import annotations
 
 import logging
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -52,6 +52,7 @@ class ClimateAnalysis:
         self._cache = FileCache(OpenMeteoProvider(), cache_dir)
         self.start_year = start_year
         self.end_year = end_year
+        self._computed_cache: dict[tuple, pd.DataFrame] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -62,6 +63,7 @@ class ClimateAnalysis:
         location: LocationInfo,
         params: Optional[ComfortParams] = None,
         daytime_only: bool = True,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Return mean/std UTCI and temperature per calendar month.
 
@@ -81,7 +83,7 @@ class ClimateAnalysis:
         if params is None:
             params = ComfortParams()
 
-        df = self._load_years(location, params)
+        df = self._load_years(location, params, progress_callback=progress_callback)
 
         if daytime_only:
             df = df[(df.index.hour >= 7) & (df.index.hour <= 19)]
@@ -113,6 +115,7 @@ class ClimateAnalysis:
         location: LocationInfo,
         month: int,
         params: Optional[ComfortParams] = None,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Return mean comfort indices by hour-of-day for a specific month.
 
@@ -124,7 +127,7 @@ class ClimateAnalysis:
         if params is None:
             params = ComfortParams()
 
-        df = self._load_years(location, params)
+        df = self._load_years(location, params, progress_callback=progress_callback)
         month_df = df[df.index.month == month]
 
         rows = []
@@ -147,6 +150,7 @@ class ClimateAnalysis:
         month: Optional[int] = None,
         params: Optional[ComfortParams] = None,
         daytime_only: bool = True,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Rank locations by how close their average UTCI is to 'no thermal stress'.
 
@@ -164,7 +168,7 @@ class ClimateAnalysis:
         rows = []
         for loc in locations:
             try:
-                df = self._load_years(loc, params)
+                df = self._load_years(loc, params, progress_callback=progress_callback)
                 if month:
                     df = df[df.index.month == month]
                 if daytime_only:
@@ -196,9 +200,12 @@ class ClimateAnalysis:
         location: LocationInfo,
         params: Optional[ComfortParams] = None,
         show: bool = True,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> plt.Figure:
         """Bar chart of mean UTCI ± std per month, stacked stress-fraction bar."""
-        stats = self.monthly_stats(location, params=params)
+        stats = self.monthly_stats(
+            location, params=params, progress_callback=progress_callback
+        )
         months = range(1, 13)
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 7), sharex=True)
@@ -216,10 +223,7 @@ class ClimateAnalysis:
         ax1.set_ylabel("UTCI medio diurno [°C]")
         ax1.set_title(f"Profilo climatologico — {location}  ({self.start_year}–{self.end_year})")
         ax1.grid(axis="y", alpha=0.3)
-        ax1.set_ylim(
-            min(stats["utci_mean"].min() - 10, -5),
-            max(stats["utci_mean"].max() + 10, 35),
-        )
+        _set_utci_axis_limits(ax1, stats["utci_mean"].to_numpy(dtype=float))
 
         # ── Stress fraction stacked bar ────────────────────────────────
         no_stress = stats["no_stress_frac"].values
@@ -249,9 +253,12 @@ class ClimateAnalysis:
         month: int,
         params: Optional[ComfortParams] = None,
         show: bool = True,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> plt.Figure:
         """Shaded mean ± IQR UTCI curve over a typical day for a given month."""
-        profile = self.hourly_profile(location, month=month, params=params)
+        profile = self.hourly_profile(
+            location, month=month, params=params, progress_callback=progress_callback
+        )
         hours = profile.index
 
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -270,6 +277,7 @@ class ClimateAnalysis:
         ax.set_ylabel("°C")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
+        _set_utci_axis_limits(ax, profile["utci_mean"].to_numpy(dtype=float))
         month_name = MONTHS_IT[month - 1]
         ax.set_title(f"Profilo orario tipico — {location}, {month_name}  ({self.start_year}–{self.end_year})")
 
@@ -317,17 +325,36 @@ class ClimateAnalysis:
         self,
         location: LocationInfo,
         params: ComfortParams,
+        progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
         """Fetch and concatenate ERA5 data for all years, compute comfort."""
+        cache_key = (
+            location.cache_key(),
+            self.start_year,
+            self.end_year,
+            params.met,
+            float(params.sun_exposure),
+            params.posture,
+        )
+        cached = self._computed_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         frames = []
-        for year in range(self.start_year, self.end_year + 1):
+        years = list(range(self.start_year, self.end_year + 1))
+        total = len(years)
+        for i, year in enumerate(years, start=1):
+            if progress_callback is not None:
+                progress_callback(i, total, year)
             start = pd.Timestamp(f"{year}-01-01", tz="UTC")
             end = pd.Timestamp(f"{year}-12-31 23:00", tz="UTC")
             logger.info("Loading %d for %s …", year, location)
             raw = self._cache.get(location, start, end)
             cf = calculate_comfort(raw, lat=location.lat, lon=location.lon, params=params)
             frames.append(cf)
-        return pd.concat(frames).sort_index()
+        merged = pd.concat(frames).sort_index()
+        self._computed_cache[cache_key] = merged
+        return merged
 
 
 # ---------------------------------------------------------------------------
@@ -351,3 +378,20 @@ def _utci_month_color(utci_val: float) -> str:
         if lo <= utci_val < hi:
             return UTCI_COLORS[cat]
     return "#aaa"
+
+
+def _set_utci_axis_limits(ax: plt.Axes, values: np.ndarray) -> None:
+    finite = values[np.isfinite(values)]
+    if len(finite) == 0:
+        ax.set_ylim(-10, 40)
+        return
+
+    vmin = float(np.nanmin(finite))
+    vmax = float(np.nanmax(finite))
+    pad = max(3.0, 0.15 * (vmax - vmin))
+    lower = max(-35.0, vmin - pad)
+    upper = min(60.0, vmax + pad)
+    if upper - lower < 10:
+        lower -= 5
+        upper += 5
+    ax.set_ylim(lower, upper)
