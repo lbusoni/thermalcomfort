@@ -27,6 +27,34 @@ import pandas as pd
 # Hide noisy informational Intel OpenMP runtime warnings (not computation errors).
 os.environ.setdefault("KMP_WARNINGS", "0")
 
+COMMON_VARIABLE_CHOICES = [
+    "utci",
+    "utci_category",
+    "temperature_2m",
+    "relative_humidity_2m",
+    "wind_speed_10m",
+    "mrt",
+    "heat_index",
+    "wind_chill",
+    "wbgt_outdoor",
+    "apparent_temperature",
+    "precipitation",
+    "cloud_cover",
+    "shortwave_radiation",
+    "direct_normal_irradiance",
+    "diffuse_radiation",
+]
+
+MAP_VARIABLE_CHOICES = [
+    "utci",
+    "temperature_2m",
+    "mrt",
+    "heat_index",
+    "wind_chill",
+    "wbgt_outdoor",
+    "apparent_temperature",
+]
+
 # ---------------------------------------------------------------------------
 # Argument helpers
 # ---------------------------------------------------------------------------
@@ -358,8 +386,12 @@ def main() -> None:
     p_cmp = sub.add_parser("compare", help="Compare multiple locations")
     p_cmp.add_argument("locations", nargs="+", help="'Name:lat,lon' …")
     _add_common(p_cmp)
-    p_cmp.add_argument("--variable", default="utci",
-                       help="Variable to compare (default: utci)")
+    p_cmp.add_argument(
+        "--variable",
+        default="utci",
+        choices=COMMON_VARIABLE_CHOICES,
+        help="Variable to compare",
+    )
     p_cmp.add_argument("--hour", default=None,
                        help="Print table for this UTC hour (0-23)")
 
@@ -389,7 +421,12 @@ def main() -> None:
     p_map.add_argument("--datetime", default=None, metavar="DATETIME",
                        help="UTC datetime to display (default: now)")
     _add_common(p_map, dates=False)
-    p_map.add_argument("--variable", default="utci")
+    p_map.add_argument(
+        "--variable",
+        default="utci",
+        choices=MAP_VARIABLE_CHOICES,
+        help="Variable shown on map markers",
+    )
     p_map.add_argument("--static", action="store_true",
                        help="Static matplotlib map instead of interactive HTML")
 
@@ -397,7 +434,12 @@ def main() -> None:
     p_fcast = sub.add_parser("forecast", help="Forecast vs actual comparison")
     p_fcast.add_argument("location", help="'Name:lat,lon' or 'lat,lon'")
     _add_common(p_fcast)
-    p_fcast.add_argument("--variable", default="utci")
+    p_fcast.add_argument(
+        "--variable",
+        default="utci",
+        choices=COMMON_VARIABLE_CHOICES,
+        help="Variable for forecast-vs-actual comparison",
+    )
 
     args = parser.parse_args()
 
