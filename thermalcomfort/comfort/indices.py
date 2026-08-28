@@ -1,12 +1,12 @@
 """Thermal comfort index calculations.
 
 Primary index: UTCI (Universal Thermal Climate Index, Bröde et al. 2012).
-  - Requires: air temperature, wind speed, Mean Radiant Temperature (MRT),
-    relative humidity.
-  - MRT is estimated from solar radiation components when available,
-    otherwise falls back to air temperature (shade assumption).
-  - Solar position (needed for direct-beam MRT contribution) is computed
-    from latitude/longitude using pvlib.
+    - Requires: air temperature, wind speed at 10 m, Mean Radiant Temperature
+        (MRT), relative humidity.
+    - MRT is estimated from available radiation components when present,
+        otherwise falls back to air temperature (shade assumption).
+    - Solar position (needed for direct-beam MRT contribution) is computed
+        from latitude/longitude using pvlib.
 
 Secondary indices (computed when data allows):
   - Heat Index (NOAA Rothfusz, valid for T > 27 °C and RH > 40 %)
@@ -29,7 +29,6 @@ from pythermalcomfort.models import (
     utci,
     wind_chill_temperature,
 )
-from pythermalcomfort.utilities import v_relative
 
 # ---------------------------------------------------------------------------
 # UTCI thermal stress categories (ISO TR 11079 / Bröde 2012)
@@ -83,6 +82,20 @@ ALPHA_SW = 0.7
 
 # Long-wave emissivity of human body
 EPSILON_BODY = 0.97
+
+LONGWAVE_DOWNWARD_COLUMNS = (
+    "longwave_downward",
+    "downward_longwave_radiation",
+    "surface_thermal_radiation_downwards",
+    "strd",
+)
+
+LONGWAVE_UPWARD_COLUMNS = (
+    "longwave_upward",
+    "upward_longwave_radiation",
+    "surface_thermal_radiation_upwards",
+    "stru",
+)
 
 
 @dataclass
@@ -161,14 +174,10 @@ def calculate_comfort(
     # ------------------------------------------------------------------
     # UTCI
     # ------------------------------------------------------------------
-    # Adjust wind speed for body movement (v_relative uses 10 m wind)
-    vr = v_relative(v=ws_clamped.tolist(), met=params.met)
-    vr = np.array(vr, dtype=float)
-
     utci_result = utci(
         tdb=ta.tolist(),
         tr=mrt.tolist(),
-        v=vr.tolist(),
+        v=ws_clamped.tolist(),
         rh=rh.tolist(),
         limit_inputs=False,
         round_output=False,
@@ -209,69 +218,98 @@ def _estimate_mrt(
     """Estimate Mean Radiant Temperature from solar radiation data.
 
     When direct-normal irradiance and solar position are available the MRT
-    includes the short-wave solar gain (delta_mrt from pythermalcomfort's
-    solar_gain model).  When radiation data is absent, MRT defaults to ta
+    includes the short-wave solar gain returned by pythermalcomfort's
+    solar_gain model. That model already contains a short-wave diffuse and
+    reflected surrogate, so we do not add a separate diffuse term on top of
+    it. Optional long-wave columns, if present, are converted to a linearized
+    MRT correction. When radiation data is absent, MRT defaults to ta
     (full-shade approximation).
     """
     mrt = ta.copy()
 
+    delta = np.zeros_like(ta)
+
     dni = _get_col(df, "direct_normal_irradiance")
-    if dni is None:
-        return mrt  # No radiation data → shade approximation
+    diff = _get_col(df, "diffuse_radiation")
 
     # Solar position (pvlib, vectorised over the UTC timestamps)
     solar_pos = _solar_position(df.index, lat, lon)
     elevation = solar_pos["apparent_elevation"].to_numpy(dtype=float)
-    # Only daylight hours with positive solar elevation
-    day_mask = (elevation > 0) & ~np.isnan(dni) & (dni > 0)
+    daylight = elevation > 0
 
-    if not np.any(day_mask):
-        return mrt
+    if dni is not None and np.any(daylight & (dni > 0)):
+        idx = np.where(daylight & (dni > 0))[0]
 
-    # solar_gain expects scalar or list inputs; process daylight hours only
-    idx = np.where(day_mask)[0]
-    sol_alt = elevation[idx].tolist()
-    sol_dir = dni[idx].tolist()
-    ta_day = ta[idx].tolist()
-
-    sg = solar_gain(
-        sol_altitude=sol_alt,
-        # 90° = sun from the side (worst-case / conservative assumption)
-        sharp=[90.0] * len(idx),
-        sol_radiation_dir=sol_dir,
-        sol_transmittance=[1.0] * len(idx),   # fully outdoors
-        f_svv=[1.0] * len(idx),               # open sky
-        f_bes=[params.sun_exposure] * len(idx),
-        asw=ALPHA_SW,
-        posture=params.posture,
-        round_output=False,
-    )
-    delta = np.array(sg.delta_mrt, dtype=float)
-
-    # Add diffuse-sky contribution (half-sphere, fraction not blocked by sun)
-    diff = _get_col(df, "diffuse_radiation")
-    if diff is not None:
-        diff_day = diff[idx]
-        # Simplified diffuse MRT increment (ASHRAE / ISO 7933 approach)
-        ta_k = ta[idx] + 273.15
-        diff_delta = (
-            ALPHA_SW * 0.5 * diff_day / (4.0 * EPSILON_BODY * SIGMA * ta_k**3)
+        sg = solar_gain(
+            sol_altitude=elevation[idx].tolist(),
+            # 90° = sun from the side (conservative default orientation)
+            sharp=[90.0] * len(idx),
+            sol_radiation_dir=dni[idx].tolist(),
+            sol_transmittance=[1.0] * len(idx),
+            f_svv=[1.0] * len(idx),
+            f_bes=[params.sun_exposure] * len(idx),
+            asw=ALPHA_SW,
+            posture=params.posture,
+            round_output=False,
         )
-        delta = delta + np.nan_to_num(diff_delta, nan=0.0)
+        delta[idx] += np.array(sg.delta_mrt, dtype=float)
 
-    mrt[idx] = ta[idx] + delta
+    elif diff is not None:
+        # Diffuse-only fallback when no direct-beam irradiance is available.
+        idx = np.where(daylight & (diff > 0))[0]
+        if idx.size:
+            ta_k = ta[idx] + 273.15
+            diff_delta = (
+                ALPHA_SW * 0.5 * diff[idx] / (4.0 * EPSILON_BODY * SIGMA * ta_k**3)
+            )
+            delta[idx] += np.nan_to_num(diff_delta, nan=0.0)
+
+    lw_down = _get_first_col(df, LONGWAVE_DOWNWARD_COLUMNS)
+    lw_up = _get_first_col(df, LONGWAVE_UPWARD_COLUMNS)
+    if lw_down is not None or lw_up is not None:
+        ta_k = ta + 273.15
+        sigma_t4 = SIGMA * ta_k**4
+        absorbed_lw = np.zeros_like(ta_k)
+
+        if lw_down is not None:
+            absorbed_lw += 0.5 * lw_down
+        else:
+            absorbed_lw += 0.5 * sigma_t4
+
+        if lw_up is not None:
+            absorbed_lw += 0.5 * lw_up
+        else:
+            absorbed_lw += 0.5 * sigma_t4
+
+        absorbed_lw -= sigma_t4
+        delta += np.nan_to_num(
+            absorbed_lw / (4.0 * EPSILON_BODY * SIGMA * ta_k**3),
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+
+    mrt = ta + delta
     return mrt
 
 
-def _solar_position(index: pd.DatetimeIndex, lat: float, lon: float) -> pd.DataFrame:
+def _solar_position(index: pd.Index, lat: float, lon: float) -> pd.DataFrame:
     loc = pvlib.location.Location(latitude=lat, longitude=lon, tz="UTC")
-    return loc.get_solarposition(index)
+    return loc.get_solarposition(pd.DatetimeIndex(index))
 
 
 def _get_col(df: pd.DataFrame, col: str) -> Optional[np.ndarray]:
     if col in df.columns:
         arr = df[col].to_numpy(dtype=float)
         if not np.all(np.isnan(arr)):
+            return arr
+    return None
+
+
+def _get_first_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> Optional[np.ndarray]:
+    for col in candidates:
+        arr = _get_col(df, col)
+        if arr is not None:
             return arr
     return None
 

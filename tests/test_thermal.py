@@ -535,10 +535,12 @@ diffuse_mrt = np.nan_to_num(
 # TOTAL MRT
 # ============================================================
 
+# The direct-beam solar gain already carries an internal short-wave diffuse
+# and reflected surrogate via pythermalcomfort.solar_gain(). We keep the
+# separate diffuse estimate for inspection, but we do not add it again here.
 MRT = (
     Ta
     + solar_gain_mrt
-    + diffuse_mrt
 )
 
 

@@ -324,7 +324,6 @@ def cmd_calc(args):
         utci,
         wind_chill_temperature,
     )
-    from pythermalcomfort.utilities import v_relative
 
     from thermalcomfort.comfort.indices import (
         ACTIVITY_MET,
@@ -367,8 +366,7 @@ def cmd_calc(args):
 
     # ── UTCI ──────────────────────────────────────────────────────────
     ws_eff = max(ws, MIN_WIND_SPEED)
-    vr = float(v_relative(v=ws_eff, met=met))
-    utci_res = utci(tdb=ta, tr=mrt, v=vr, rh=rh, limit_inputs=False, round_output=False)
+    utci_res = utci(tdb=ta, tr=mrt, v=ws_eff, rh=rh, limit_inputs=False, round_output=False)
     utci_val = float(utci_res.utci)
 
     category = next(
