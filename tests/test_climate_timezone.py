@@ -21,3 +21,7 @@ def test_daytime_filter_uses_local_timezone():
     filtered = ca._filter_daytime_hours(df, timezone="Europe/Rome")
 
     assert filtered.index.hour.tolist() == list(range(7, 20))
+
+
+
+

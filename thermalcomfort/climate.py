@@ -66,6 +66,25 @@ MONTHS_IT = [
     "Lug", "Ago", "Set", "Ott", "Nov", "Dic",
 ]
 
+ACCEPTABLE_WARMTH_CATEGORIES = {
+    "no thermal stress",
+    "moderate heat stress",
+}
+
+HEAT_STRESS_CATEGORIES = {
+    "strong heat stress",
+    "very strong heat stress",
+    "extreme heat stress",
+}
+
+COLD_STRESS_CATEGORIES = {
+    "slight cold stress",
+    "moderate cold stress",
+    "strong cold stress",
+    "very strong cold stress",
+    "extreme cold stress",
+}
+
 
 class ClimateAnalysis:
     """Fetch and aggregate multi-year ERA5 data for climatological summaries.
@@ -108,13 +127,14 @@ class ClimateAnalysis:
         location : LocationInfo
         params : ComfortParams, optional
         daytime_only : bool
-            If True, only 07-19 UTC hours are included (avoid night distortion).
+            If True, only 07-19 local-time hours are included.
 
         Returns
         -------
         pd.DataFrame indexed by month (1-12), columns:
             utci_mean, utci_std, temp_mean, temp_std,
-            no_stress_frac, heat_stress_frac, cold_stress_frac
+            no_stress_frac, acceptable_warmth_frac,
+            heat_stress_frac, cold_stress_frac
         """
         if params is None:
             params = ComfortParams()
@@ -140,8 +160,9 @@ class ClimateAnalysis:
                 "temp_mean": m["temperature_2m"].mean(),
                 "temp_std": m["temperature_2m"].std(),
                 "no_stress_frac": (cats == "no thermal stress").mean(),
-                "heat_stress_frac": cats.str.contains("heat stress").mean(),
-                "cold_stress_frac": cats.str.contains("cold stress").mean(),
+                "acceptable_warmth_frac": cats.isin(ACCEPTABLE_WARMTH_CATEGORIES).mean(),
+                "heat_stress_frac": cats.isin(HEAT_STRESS_CATEGORIES).mean(),
+                "cold_stress_frac": cats.isin(COLD_STRESS_CATEGORIES).mean(),
             })
 
         return pd.DataFrame(rows).set_index("month")
@@ -194,15 +215,15 @@ class ClimateAnalysis:
         timezone: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, int], None]] = None,
     ) -> pd.DataFrame:
-        """Rank locations by how close their average UTCI is to 'no thermal stress'.
+        """Rank locations by acceptable daytime thermal stress conditions.
 
-        The "comfort score" is the fraction of daytime hours in the no-thermal-stress
-        band (9-26 °C UTCI).
+        The ranking score is the fraction of daytime hours in either
+        "no thermal stress" or "moderate heat stress".
 
         Returns
         -------
-        pd.DataFrame with columns: location, utci_mean, no_stress_frac,
-            ranked by no_stress_frac descending.
+        pd.DataFrame with columns: location, utci_mean, acceptable_warmth_frac,
+            ranked by acceptable_warmth_frac descending.
         """
         if params is None:
             params = ComfortParams()
@@ -222,15 +243,16 @@ class ClimateAnalysis:
                     "utci_mean": utci.mean(),
                     "utci_std": utci.std(),
                     "no_stress_frac": (cats == "no thermal stress").mean(),
-                    "heat_stress_frac": cats.str.contains("heat stress").mean(),
-                    "cold_stress_frac": cats.str.contains("cold stress").mean(),
+                    "acceptable_warmth_frac": cats.isin(ACCEPTABLE_WARMTH_CATEGORIES).mean(),
+                    "heat_stress_frac": cats.isin(HEAT_STRESS_CATEGORIES).mean(),
+                    "cold_stress_frac": cats.isin(COLD_STRESS_CATEGORIES).mean(),
                 })
             except Exception as exc:
                 logger.warning("Could not process %s: %s", loc, exc)
 
         result = pd.DataFrame(rows)
         if not result.empty:
-            result = result.sort_values("no_stress_frac", ascending=False).reset_index(drop=True)
+            result = result.sort_values("acceptable_warmth_frac", ascending=False).reset_index(drop=True)
         return result
 
     # ------------------------------------------------------------------
@@ -268,15 +290,15 @@ class ClimateAnalysis:
         _set_utci_axis_limits(ax1, stats["utci_mean"].to_numpy(dtype=float))
 
         # ── Stress fraction stacked bar ────────────────────────────────
-        no_stress = stats["no_stress_frac"].values
-        heat = stats["heat_stress_frac"].values
-        cold = stats["cold_stress_frac"].values
-        other = 1 - no_stress - heat - cold
+        acceptable = stats["acceptable_warmth_frac"].to_numpy(dtype=float)
+        heat = stats["heat_stress_frac"].to_numpy(dtype=float)
+        cold = stats["cold_stress_frac"].to_numpy(dtype=float)
+        other = np.clip(1.0 - acceptable - heat - cold, 0.0, 1.0)
 
-        ax2.bar(months, no_stress, color=UTCI_COLORS["no thermal stress"], alpha=0.85, label="nessuno stress")
-        ax2.bar(months, heat,      color=UTCI_COLORS["strong heat stress"], alpha=0.85, bottom=no_stress, label="stress da caldo")
-        ax2.bar(months, cold,      color=UTCI_COLORS["moderate cold stress"], alpha=0.85, bottom=no_stress + heat, label="stress da freddo")
-        ax2.bar(months, other,     color="#ccc", alpha=0.6, bottom=no_stress + heat + cold, label="altro")
+        ax2.bar(months, acceptable, color=UTCI_COLORS["no thermal stress"], alpha=0.85, label="poco stress (ok + caldo moderato)")
+        ax2.bar(months, heat,       color=UTCI_COLORS["strong heat stress"], alpha=0.85, bottom=acceptable, label="stress da caldo forte+")
+        ax2.bar(months, cold,       color=UTCI_COLORS["moderate cold stress"], alpha=0.85, bottom=acceptable + heat, label="stress da freddo (da lieve)")
+        ax2.bar(months, other,      color="#ccc", alpha=0.6, bottom=acceptable + heat + cold, label="altro")
         ax2.set_ylabel("Frazione di ore")
         ax2.set_ylim(0, 1)
         ax2.legend(fontsize=8, loc="upper right")
@@ -350,13 +372,13 @@ class ClimateAnalysis:
         fig, ax = plt.subplots(figsize=(10, max(3, len(df) * 0.55)))
         colors = [_utci_month_color(v) for v in df["utci_mean"]]
         y = range(len(df))
-        ax.barh(y, df["no_stress_frac"], color=colors, alpha=0.85)
+        ax.barh(y, df["acceptable_warmth_frac"], color=colors, alpha=0.85)
         ax.set_yticks(list(y))
         ax.set_yticklabels(df["location"])
-        ax.set_xlabel("Frazione ore senza stress termico (diurno)")
+        ax.set_xlabel("Frazione ore diurne con stress accettabile")
         ax.set_xlim(0, 1)
         for i, (_, row) in enumerate(df.iterrows()):
-            ax.text(row["no_stress_frac"] + 0.01, i,
+            ax.text(row["acceptable_warmth_frac"] + 0.01, i,
                     f"{row['utci_mean']:.1f}°C", va="center", fontsize=8)
         month_label = f" — {MONTHS_IT[month - 1]}" if month else ""
         ax.set_title(f"Classifica comfort{month_label}  ({self.start_year}–{self.end_year})")
@@ -416,6 +438,7 @@ def _empty_row(month: int) -> dict:
         "utci_mean": np.nan, "utci_std": np.nan,
         "temp_mean": np.nan, "temp_std": np.nan,
         "no_stress_frac": np.nan,
+        "acceptable_warmth_frac": np.nan,
         "heat_stress_frac": np.nan,
         "cold_stress_frac": np.nan,
     }
