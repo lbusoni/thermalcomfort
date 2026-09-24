@@ -16,6 +16,7 @@ from typing import Optional, Sequence, Union
 import pandas as pd
 
 from .cache import FileCache
+from .cache import clear_cache as _clear_cache_dir
 from .comfort.indices import ComfortParams, calculate_comfort
 from .locations import LOCATIONS, get_known_location, known_location_names
 from .providers.base import LocationInfo
@@ -58,6 +59,10 @@ class ThermalComfortSystem:
         Defaults to ~/.thermalcomfort_cache/.
     log_level : int, optional
         Logging level for the thermalcomfort package (default: WARNING).
+
+    See also
+    --------
+    clear_cache : Delete all locally cached weather data.
     """
 
     def __init__(
@@ -92,7 +97,7 @@ class ThermalComfortSystem:
             Date/time range (inclusive). Strings are parsed by pandas; if no
             timezone is given UTC is assumed.
         params : ComfortParams, optional
-            Activity level, sun exposure, posture.  See ComfortParams.
+            Sun exposure, ground surface type.  See ComfortParams.
         raw : bool
             If True, return raw weather data without comfort calculation.
 
@@ -206,6 +211,14 @@ class ThermalComfortSystem:
             local_tz=local_tz,
             show=show,
         )
+
+    # ------------------------------------------------------------------
+    # Cache maintenance
+    # ------------------------------------------------------------------
+
+    def clear_cache(self) -> int:
+        """Delete all locally cached weather data. Returns files removed."""
+        return _clear_cache_dir(self._cache.cache_dir)
 
 
 # ---------------------------------------------------------------------------

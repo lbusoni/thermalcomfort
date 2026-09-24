@@ -14,6 +14,7 @@ Subcommands
     map         Build an interactive HTML map for a timestamp
     forecast    Forecast vs actual comparison plot
     locations   Print predefined known locations
+    cache       Inspect or clear the local weather-data cache
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ import sys
 from datetime import datetime, timezone
 
 import pandas as pd
+
+from thermalcomfort.comfort.mrt import SURFACE_PROPERTIES
 
 # Hide noisy informational Intel OpenMP runtime warnings (not computation errors).
 os.environ.setdefault("KMP_WARNINGS", "0")
@@ -106,7 +109,7 @@ def cmd_show(args):
 
     tcs = ThermalComfortSystem(log_level=10 if args.verbose else 30)
     loc = _parse_location(args.location)
-    params = ComfortParams(activity=args.activity, sun_exposure=args.sun)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
 
     print(f"Fetching data for {loc} from {args.start} to {args.end} …")
     df = tcs.get(loc, args.start, args.end, params=params)
@@ -131,7 +134,7 @@ def cmd_compare(args):
 
     tcs = ThermalComfortSystem(log_level=10 if args.verbose else 30)
     locations = [_parse_location(l) for l in args.locations]
-    params = ComfortParams(activity=args.activity, sun_exposure=args.sun)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
 
     datasets = []
     for loc in locations:
@@ -169,7 +172,7 @@ def cmd_summary(args):
 
     tcs = ThermalComfortSystem(log_level=10 if args.verbose else 30)
     loc = _parse_location(args.location)
-    params = ComfortParams(activity=args.activity, sun_exposure=args.sun)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
 
     df = tcs.get(loc, args.start, args.end, params=params)
     _print_summary(df, str(loc))
@@ -190,9 +193,8 @@ def cmd_climate(args):
 
     from thermalcomfort.climate import ClimateAnalysis
     loc = _parse_location(args.location)
-    params_kw = dict(activity=args.activity, sun_exposure=args.sun)
     from thermalcomfort import ComfortParams
-    params = ComfortParams(**params_kw)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
 
     ca = ClimateAnalysis(
         start_year=int(args.start_year),
@@ -251,7 +253,7 @@ def cmd_rank(args):
     from thermalcomfort.climate import ClimateAnalysis
 
     locations = [_parse_location(l) for l in args.locations]
-    params = ComfortParams(activity=args.activity, sun_exposure=args.sun)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
     ca = ClimateAnalysis(start_year=int(args.start_year), end_year=int(args.end_year))
 
     month = int(args.month) if args.month else None
@@ -279,7 +281,7 @@ def cmd_map(args):
 
     tcs = ThermalComfortSystem(log_level=10 if args.verbose else 30)
     locations = [_parse_location(l) for l in args.locations]
-    params = ComfortParams(activity=args.activity, sun_exposure=args.sun)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
     dt = _parse_ts(args.datetime)
 
     # Determine date range: ±1 day around the target timestamp
@@ -320,19 +322,17 @@ def cmd_calc(args):
     import numpy as np
     from pythermalcomfort.models import (
         heat_index_rothfusz,
-        solar_gain,
         utci,
         wind_chill_temperature,
     )
 
     from thermalcomfort.comfort.indices import (
-        ACTIVITY_MET,
-        ALPHA_SW,
         MIN_WIND_SPEED,
         UTCI_CATEGORIES,
         _wet_bulb_stull,
         _wbgt_outdoor,
     )
+    from thermalcomfort.comfort.mrt import calculate_outdoor_mrt
 
     ta  = args.temp
     rh  = args.rh
@@ -342,27 +342,25 @@ def cmd_calc(args):
     if args.mrt is not None:
         mrt = args.mrt
         mrt_note = "provided directly"
-    elif args.solar is not None:
-        sg = solar_gain(
-            sol_altitude=args.solar_elevation,
-            sharp=90.0,
-            sol_radiation_dir=args.solar,
-            sol_transmittance=1.0,
-            f_svv=1.0,
-            f_bes=args.sun,
-            asw=ALPHA_SW,
-            posture="standing",
-            round_output=False,
-        )
-        mrt = ta + float(sg.delta_mrt)
-        mrt_note = f"from solar gain (DNI={args.solar} W/m², elev={args.solar_elevation}°)"
     else:
-        mrt = ta
-        mrt_note = "= Ta  (shade / no solar data)"
-
-    # ── Activity ──────────────────────────────────────────────────────
-    met = ACTIVITY_MET[args.activity] if args.activity in ACTIVITY_MET else float(args.activity)
-    act_label = f"{args.activity} ({met} MET)"
+        mrt = float(calculate_outdoor_mrt(
+            ta=np.array([ta]),
+            rh=np.array([rh]),
+            ghi=np.array([args.ghi]),
+            dni=np.array([args.dni]),
+            dhi=np.array([args.dhi]),
+            solar_elevation=np.array([args.solar_elevation]),
+            cloud_fraction=np.array([args.cloud / 100.0]),
+            sun_exposure=args.sun,
+            surface_type=args.surface_type,
+        )[0])
+        if args.ghi or args.dni or args.dhi:
+            mrt_note = (
+                f"radiative balance (GHI={args.ghi}, DNI={args.dni}, DHI={args.dhi} W/m², "
+                f"elev={args.solar_elevation}°, cloud={args.cloud}%, {args.surface_type})"
+            )
+        else:
+            mrt_note = f"radiative balance, no solar input (clear-sky long-wave, {args.surface_type})"
 
     # ── UTCI ──────────────────────────────────────────────────────────
     ws_eff = max(ws, MIN_WIND_SPEED)
@@ -404,7 +402,6 @@ def cmd_calc(args):
     print(f"  Relative humidity:    {rh:.0f} %")
     print(f"  Wind speed (10 m):    {ws:.1f} m/s")
     print(f"  Mean radiant temp:    {mrt:.1f} °C  ({mrt_note})")
-    print(f"  Activity:             {act_label}")
     print(f"  Sun exposure:         {args.sun}")
     print(f"\n{SEP}")
     print("  Comfort indices")
@@ -426,7 +423,7 @@ def cmd_forecast(args):
 
     tcs = ThermalComfortSystem(log_level=10 if args.verbose else 30)
     loc = _parse_location(args.location)
-    params = ComfortParams(activity=args.activity, sun_exposure=args.sun)
+    params = ComfortParams(sun_exposure=args.sun, surface_type=args.surface_type)
 
     fig = tcs.plot_forecast_vs_actual(
         loc, args.start, args.end,
@@ -450,6 +447,41 @@ def cmd_locations(args):
     for name in sorted(LOCATIONS):
         loc = LOCATIONS[name]
         print(f"- {name}:{loc.lat:.4f},{loc.lon:.4f}")
+
+
+def cmd_cache(args):
+    from thermalcomfort.cache import DEFAULT_CACHE_DIR, cache_contents, clear_cache, clear_location_cache
+
+    if not args.clear:
+        rows = cache_contents()
+        if not rows:
+            print(f"Cache is empty ({DEFAULT_CACHE_DIR}).")
+            return
+        print(f"Cache directory: {DEFAULT_CACHE_DIR}\n")
+        for r in rows:
+            print(f"  {r['provider']:20s} {r['file']:25s} {r['size_bytes'] / 1024:8.1f} KB")
+        total = sum(r["size_bytes"] for r in rows)
+        print(f"\n{len(rows)} file(s), {total / 1024 / 1024:.2f} MB total")
+        return
+
+    if args.locations:
+        locations = [_parse_location(l) for l in args.locations]
+        if not args.yes:
+            names = ", ".join(str(l) for l in locations)
+            reply = input(f"Delete cached data for {names}? [y/N] ")
+            if reply.strip().lower() != "y":
+                print("Aborted.")
+                return
+        removed = sum(clear_location_cache(loc) for loc in locations)
+    else:
+        if not args.yes:
+            reply = input(f"Delete ALL cached weather data under {DEFAULT_CACHE_DIR}? [y/N] ")
+            if reply.strip().lower() != "y":
+                print("Aborted.")
+                return
+        removed = clear_cache()
+
+    print(f"Removed {removed} cache file(s).")
 
 
 # ---------------------------------------------------------------------------
@@ -483,12 +515,11 @@ def _add_common(p: argparse.ArgumentParser, *, dates: bool = True) -> None:
                        help="Start date/time (default: 7 days ago)")
         p.add_argument("--end",   default=today,    metavar="DATE",
                        help="End date/time (default: today)")
-    p.add_argument("--activity", default="walking",
-                   choices=["resting", "seated", "standing", "walking",
-                             "walking_fast", "hiking", "cycling"],
-                   help="Activity level (default: walking)")
     p.add_argument("--sun", type=float, default=0.5, metavar="0-1",
                    help="Sun exposure fraction 0=shade … 1=full sun (default: 0.5)")
+    p.add_argument("--surface-type", default="asphalt",
+                   choices=list(SURFACE_PROPERTIES),
+                   help="Ground surface under the person (default: asphalt)")
     p.add_argument("--tz", default=None, metavar="TZ",
                    help="Local timezone for x-axis (e.g. Europe/Rome)")
     p.add_argument("--output", "-o", default=None, metavar="FILE",
@@ -578,16 +609,23 @@ def main() -> None:
     p_calc.add_argument("--wind", "-W", type=float, required=True, metavar="m/s",
                         help="Wind speed at 10 m height (m/s)")
     p_calc.add_argument("--mrt",  type=float, default=None, metavar="°C",
-                        help="Mean Radiant Temperature (°C). "
-                             "Defaults to air temperature (shade assumption).")
-    p_calc.add_argument("--solar", type=float, default=None, metavar="W/m²",
-                        help="Direct Normal Irradiance (W/m²) — alternative way to estimate MRT.")
+                        help="Mean Radiant Temperature (°C), provided directly. "
+                             "Overrides the radiative estimate below.")
+    p_calc.add_argument("--ghi", type=float, default=0.0, metavar="W/m²",
+                        help="Global horizontal irradiance (default: 0)")
+    p_calc.add_argument("--dni", type=float, default=0.0, metavar="W/m²",
+                        help="Direct normal irradiance (default: 0)")
+    p_calc.add_argument("--dhi", type=float, default=0.0, metavar="W/m²",
+                        help="Diffuse horizontal irradiance (default: 0)")
     p_calc.add_argument("--solar-elevation", type=float, default=45.0, metavar="deg",
-                        help="Solar elevation angle in degrees, used with --solar (default: 45).")
-    p_calc.add_argument("--activity", default="walking",
-                        choices=["resting", "seated", "standing", "walking",
-                                 "walking_fast", "hiking", "cycling"],
-                        help="Activity level (default: walking)")
+                        help="Solar elevation angle in degrees, used with --dni/--ghi (default: 45).")
+    p_calc.add_argument("--cloud", type=float, default=0.0, metavar="0-100",
+                        help="Cloud cover, percent (default: 0, clear sky)")
+    p_calc.add_argument("--surface-type", default="asphalt",
+                        choices=list(SURFACE_PROPERTIES),
+                        help="Ground surface under the person, for reflected "
+                             "short-wave gain and ground long-wave emission "
+                             "(default: asphalt)")
     p_calc.add_argument("--sun", type=float, default=0.5, metavar="0-1",
                         help="Sun exposure fraction 0=shade … 1=full sun (default: 0.5)")
 
@@ -605,6 +643,17 @@ def main() -> None:
     # ── locations ─────────────────────────────────────────────────────
     sub.add_parser("locations", help="Print predefined known locations")
 
+    # ── cache ─────────────────────────────────────────────────────────
+    p_cache = sub.add_parser("cache", help="Inspect or clear the local weather-data cache")
+    p_cache.add_argument("locations", nargs="*",
+                         help="With --clear, only clear these locations "
+                              "('Name:lat,lon' / 'lat,lon' / known name). "
+                              "Omit to target the whole cache.")
+    p_cache.add_argument("--clear", action="store_true",
+                         help="Delete cached data instead of listing it")
+    p_cache.add_argument("-y", "--yes", action="store_true",
+                         help="Skip confirmation prompt when clearing")
+
     args = parser.parse_args()
 
     # Set default datetime for map command
@@ -621,6 +670,7 @@ def main() -> None:
         "calc":     cmd_calc,
         "forecast": cmd_forecast,
         "locations": cmd_locations,
+        "cache":     cmd_cache,
     }
     dispatch[args.cmd](args)
 

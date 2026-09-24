@@ -22,9 +22,8 @@ florence = Location(43.7696, 11.2558, "Florence")
 
 ```python
 ComfortParams(
-    activity="walking",     # or custom MET float
-    sun_exposure=0.5,       # 0..1
-    posture="standing",     # "standing"|"sitting"
+    sun_exposure=0.5,       # 0..1 (0 = full shade, 1 = full sun)
+    surface_type="asphalt", # "asphalt"|"grass"
 )
 ```
 
@@ -35,7 +34,7 @@ df = tcs.get(
     location=florence,
     start="2024-07-01",
     end="2024-07-03 23:00",
-    params=ComfortParams(activity="walking", sun_exposure=0.5),
+    params=ComfortParams(sun_exposure=0.5),
     raw=False,
 )
 ```
@@ -85,6 +84,15 @@ UTCI category distribution plot.
 
 Compares forecast model output against historical reanalysis.
 
+### `clear_cache()`
+
+Deletes all locally cached weather data (`~/.thermalcomfort_cache` by
+default). Returns the number of files removed.
+
+```python
+tcs.clear_cache()
+```
+
 ---
 
 ## `ClimateAnalysis`
@@ -114,7 +122,7 @@ Example:
 ```python
 stats = ca.monthly_stats(
     location=florence,
-    params=ComfortParams(activity="walking", sun_exposure=0.5),
+    params=ComfortParams(sun_exposure=0.5),
     daytime_only=True,
 )
 print(stats)
@@ -149,7 +157,7 @@ Example:
 ranking = ca.rank_locations(
     [florence, livorno, rome],
     month=4,
-    params=ComfortParams(activity="walking"),
+    params=ComfortParams(),
 )
 print(ranking)
 ```

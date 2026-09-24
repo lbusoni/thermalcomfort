@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover - optional dependency
     TimezoneFinder = None
 
 from .cache import FileCache
-from .comfort.indices import ACTIVITY_MET, UTCI_CATEGORIES, UTCI_COLORS, ComfortParams, calculate_comfort
+from .comfort.indices import UTCI_CATEGORIES, UTCI_COLORS, ComfortParams, calculate_comfort
 from .providers.base import LocationInfo
 from .providers.open_meteo import OpenMeteoProvider
 
@@ -403,9 +403,8 @@ class ClimateAnalysis:
             location.cache_key(),
             self.start_year,
             self.end_year,
-            params.met,
             float(params.sun_exposure),
-            params.posture,
+            params.surface_type,
         )
         cached = self._computed_cache.get(cache_key)
         if cached is not None:

@@ -1,18 +1,19 @@
-"""Regression test for MRT estimation used by UTCI.
+"""Regression tests for the outdoor MRT radiative-flux-balance model.
 
-The goal is to keep the model aligned with the scientific interpretation of
-UTCI inputs:
-  - in shade, MRT should fall back to Ta;
-  - with direct solar input, MRT should follow solar_gain() without adding a
-    second diffuse term on top of it.
+MRT is derived from a full short-wave + long-wave flux balance (Thorsson et
+al. 2007 / VDI 3787 style, see thermalcomfort/comfort/mrt.py), not from
+pythermalcomfort's solar_gain() — an ASHRAE 55 *indoor* model (person near a
+sunlit window). Applied outdoors with its default indoor floor reflectance
+(0.6, meant for a room floor, not ground albedo), that additive model used
+to push MRT to ~85 degC at summer noon; this suite guards against that
+regressing.
 """
 
 import pandas as pd
-import pvlib
-
-from pythermalcomfort.models import solar_gain, utci
+import pytest
 
 from thermalcomfort.comfort.indices import ComfortParams, calculate_comfort
+from thermalcomfort.comfort.mrt import calculate_outdoor_mrt
 
 
 LAT = 43.75
@@ -26,6 +27,8 @@ def _make_row(**overrides):
         "wind_speed_10m": 4.749,
         "direct_normal_irradiance": float("nan"),
         "diffuse_radiation": float("nan"),
+        "shortwave_radiation": float("nan"),
+        "cloud_cover": float("nan"),
     }
     base.update(overrides)
     return pd.DataFrame(
@@ -34,54 +37,96 @@ def _make_row(**overrides):
     )
 
 
-def test_mrt_falls_back_to_ta_without_radiation():
+def test_mrt_cools_below_ta_at_night_under_a_clear_sky():
+    # No radiation and no cloud data at all -> clear-sky assumption. A body
+    # radiating to a clear night sky loses more long-wave than it receives
+    # back (sky emissivity < 1), so MRT must sit below Ta, not equal to it
+    # as the old "shade -> MRT = Ta" fallback assumed.
     df = _make_row()
-
     result = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams())
 
-    assert float(result["mrt"].iloc[0]) == float(df["temperature_2m"].iloc[0])
+    mrt = float(result["mrt"].iloc[0])
+    ta = float(df["temperature_2m"].iloc[0])
+    assert mrt < ta - 1.0
 
 
-def test_mrt_matches_solar_gain_without_extra_diffuse_term():
+def test_full_cloud_cover_is_closer_to_ta_than_clear_sky():
+    clear = _make_row(cloud_cover=0.0)
+    overcast = _make_row(cloud_cover=100.0)
+
+    ta = float(clear["temperature_2m"].iloc[0])
+    mrt_clear = float(
+        calculate_comfort(clear, lat=LAT, lon=LON, params=ComfortParams())["mrt"].iloc[0]
+    )
+    mrt_overcast = float(
+        calculate_comfort(overcast, lat=LAT, lon=LON, params=ComfortParams())["mrt"].iloc[0]
+    )
+
+    assert abs(mrt_overcast - ta) < abs(mrt_clear - ta)
+
+
+def test_full_sun_summer_noon_mrt_is_physically_plausible():
+    # Regression guard for the ~85 degC bug: the old default
+    # floor_reflectance=0.6 from solar_gain() (an indoor ASHRAE value used
+    # as if it were outdoor ground albedo) used to blow MRT up to ~52 degC
+    # above Ta. A realistic radiative balance keeps it in a plausible
+    # full-sun range instead.
     df = _make_row(
-        direct_normal_irradiance=809.779024,
-        diffuse_radiation=153.457778,
+        temperature_2m=30.0,
+        direct_normal_irradiance=850.0,
+        diffuse_radiation=120.0,
+        shortwave_radiation=900.0,
+        cloud_cover=0.0,
     )
+    result = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(sun_exposure=0.5))
 
-    result = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams())
+    mrt = float(result["mrt"].iloc[0])
+    assert 40.0 < mrt < 65.0
 
-    solar_pos_altitude = float(
-        pvlib.location.Location(latitude=LAT, longitude=LON, tz="UTC")
-        .get_solarposition(df.index)["apparent_elevation"]
-        .iloc[0]
+
+def test_mrt_increases_with_sun_exposure():
+    df = _make_row(
+        temperature_2m=30.0,
+        direct_normal_irradiance=850.0,
+        diffuse_radiation=120.0,
+        shortwave_radiation=900.0,
+        cloud_cover=0.0,
     )
-    expected = solar_gain(
-        sol_altitude=solar_pos_altitude,
-        sharp=90.0,
-        sol_radiation_dir=809.779024,
-        sol_transmittance=1.0,
-        f_svv=1.0,
-        f_bes=0.5,
-        asw=0.7,
-        posture="standing",
-        round_output=False,
+    shaded = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(sun_exposure=0.0))
+    full_sun = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(sun_exposure=1.0))
+
+    assert float(full_sun["mrt"].iloc[0]) > float(shaded["mrt"].iloc[0])
+
+
+def test_asphalt_is_hotter_than_grass_in_full_sun():
+    df = _make_row(
+        temperature_2m=30.0,
+        direct_normal_irradiance=850.0,
+        diffuse_radiation=120.0,
+        shortwave_radiation=900.0,
+        cloud_cover=0.0,
     )
+    asphalt = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(surface_type="asphalt"))
+    grass = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(surface_type="grass"))
 
-    expected_mrt = float(df["temperature_2m"].iloc[0]) + float(expected.delta_mrt)
-    actual_mrt = float(result["mrt"].iloc[0])
+    assert float(asphalt["mrt"].iloc[0]) > float(grass["mrt"].iloc[0])
 
-    # The diffuse column is kept in the input, but it must not be added a
-    # second time when direct-beam data are available.
-    assert abs(actual_mrt - expected_mrt) < 1e-6
+
+def test_unknown_surface_type_raises():
+    df = _make_row()
+    with pytest.raises(ValueError):
+        calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(surface_type="marble"))
 
 
 def test_utci_uses_raw_10m_wind():
+    from pythermalcomfort.models import utci
+
     df = _make_row()
     result = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams())
 
     expected = utci(
         tdb=float(df["temperature_2m"].iloc[0]),
-        tr=float(df["temperature_2m"].iloc[0]),
+        tr=float(result["mrt"].iloc[0]),
         v=float(df["wind_speed_10m"].iloc[0]),
         rh=float(df["relative_humidity_2m"].iloc[0]),
         limit_inputs=False,
@@ -89,3 +134,39 @@ def test_utci_uses_raw_10m_wind():
     )
 
     assert abs(float(result["utci"].iloc[0]) - float(expected.utci)) < 1e-9
+
+
+def test_calculate_outdoor_mrt_matches_calculate_comfort_wiring():
+    # calculate_comfort must pass through the same columns/units
+    # (cloud_cover as % -> fraction) that calculate_outdoor_mrt expects.
+    import numpy as np
+
+    df = _make_row(
+        temperature_2m=30.0,
+        direct_normal_irradiance=850.0,
+        diffuse_radiation=120.0,
+        shortwave_radiation=900.0,
+        cloud_cover=25.0,
+    )
+    result = calculate_comfort(df, lat=LAT, lon=LON, params=ComfortParams(sun_exposure=0.5))
+
+    import pvlib
+
+    elevation = float(
+        pvlib.location.Location(latitude=LAT, longitude=LON, tz="UTC")
+        .get_solarposition(df.index)["apparent_elevation"]
+        .iloc[0]
+    )
+    expected = calculate_outdoor_mrt(
+        ta=np.array([30.0]),
+        rh=np.array([float(df["relative_humidity_2m"].iloc[0])]),
+        ghi=np.array([900.0]),
+        dni=np.array([850.0]),
+        dhi=np.array([120.0]),
+        solar_elevation=np.array([elevation]),
+        cloud_fraction=np.array([0.25]),
+        sun_exposure=0.5,
+        surface_type="asphalt",
+    )[0]
+
+    assert abs(float(result["mrt"].iloc[0]) - float(expected)) < 1e-6

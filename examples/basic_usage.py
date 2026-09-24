@@ -17,8 +17,8 @@ tcs = ThermalComfortSystem()
 florence = Location(lat=43.7696, lon=11.2558, name="Firenze")
 
 # ----- Define comfort scenario -----
-# Walking slowly in partial sun (typical city stroll)
-params = ComfortParams(activity="walking", sun_exposure=0.5)
+# Partial sun on an asphalt street (typical city stroll)
+params = ComfortParams(sun_exposure=0.5, surface_type="asphalt")
 
 # ----- Fetch data (cached after first run) -----
 df = tcs.get(florence, start="2024-07-01", end="2024-07-31 23:00", params=params)

@@ -3,8 +3,12 @@
 Primary index: UTCI (Universal Thermal Climate Index, Bröde et al. 2012).
     - Requires: air temperature, wind speed at 10 m, Mean Radiant Temperature
         (MRT), relative humidity.
-    - MRT is estimated from available radiation components when present,
-        otherwise falls back to air temperature (shade assumption).
+    - MRT is estimated from a full short-wave + long-wave radiative flux
+        balance (see comfort/mrt.py) using available radiation and cloud
+        cover data; in their absence it falls back to a clear-sky long-wave
+        balance driven by air temperature and humidity alone (not a flat
+        MRT = Ta assumption — a clothed body still loses net long-wave to a
+        clear sky).
     - Solar position (needed for direct-beam MRT contribution) is computed
         from latitude/longitude using pvlib.
 
@@ -13,7 +17,7 @@ Secondary indices (computed when data allows):
   - Wind Chill Temperature (valid for T < 10 °C and wind > 1.3 m/s)
   - Wet-Bulb Globe Temperature (WBGT, simplified outdoor estimate)
 
-Activity levels and sun exposure are explicit parameters.
+Sun exposure and ground surface type are explicit parameters.
 """
 
 from dataclasses import dataclass
@@ -25,10 +29,11 @@ import pvlib
 
 from pythermalcomfort.models import (
     heat_index_rothfusz,
-    solar_gain,
     utci,
     wind_chill_temperature,
 )
+
+from .mrt import calculate_outdoor_mrt
 
 # ---------------------------------------------------------------------------
 # UTCI thermal stress categories (ISO TR 11079 / Bröde 2012)
@@ -60,42 +65,8 @@ UTCI_COLORS = {
     "extreme heat stress": "#67001f",
 }
 
-# Metabolic rate presets [met]
-ACTIVITY_MET = {
-    "resting": 0.8,
-    "seated": 1.0,
-    "standing": 1.2,
-    "walking": 1.7,    # ~1.2 m/s
-    "walking_fast": 2.5,
-    "hiking": 3.5,
-    "cycling": 4.0,
-}
-
 # Minimum wind speed used in UTCI to avoid unrealistic calm-air extremes.
 MIN_WIND_SPEED = 0.5  # m/s
-
-# Stefan-Boltzmann constant
-SIGMA = 5.67e-8  # W/m²/K⁴
-
-# Short-wave absorptivity of human body (average skin + clothing)
-ALPHA_SW = 0.7
-
-# Long-wave emissivity of human body
-EPSILON_BODY = 0.97
-
-LONGWAVE_DOWNWARD_COLUMNS = (
-    "longwave_downward",
-    "downward_longwave_radiation",
-    "surface_thermal_radiation_downwards",
-    "strd",
-)
-
-LONGWAVE_UPWARD_COLUMNS = (
-    "longwave_upward",
-    "upward_longwave_radiation",
-    "surface_thermal_radiation_upwards",
-    "stru",
-)
 
 
 @dataclass
@@ -104,29 +75,17 @@ class ComfortParams:
 
     Attributes
     ----------
-    activity : str | float
-        Preset name (see ACTIVITY_MET) or a direct MET value.
     sun_exposure : float
         Fraction of body exposed to direct solar radiation, [0, 1].
         0 = full shade, 0.5 = typical outdoor (partial exposure), 1 = full sun.
-    posture : str
-        Body posture for solar gain calculation: 'standing' or 'sitting'.
+    surface_type : str
+        Ground surface under the person, used for reflected short-wave gain
+        and ground long-wave emission in the MRT radiative balance. See
+        thermalcomfort.comfort.mrt.SURFACE_PROPERTIES for available options.
     """
 
-    activity: float | str = "walking"
     sun_exposure: float = 0.5
-    posture: str = "standing"
-
-    @property
-    def met(self) -> float:
-        if isinstance(self.activity, str):
-            if self.activity not in ACTIVITY_MET:
-                raise ValueError(
-                    f"Unknown activity '{self.activity}'. "
-                    f"Choose from: {list(ACTIVITY_MET)}"
-                )
-            return ACTIVITY_MET[self.activity]
-        return float(self.activity)
+    surface_type: str = "asphalt"
 
 
 def calculate_comfort(
@@ -145,7 +104,7 @@ def calculate_comfort(
     lat, lon : float
         Geographic coordinates, used for solar position calculation.
     params : ComfortParams, optional
-        Activity level, sun exposure, posture. Defaults to ComfortParams().
+        Sun exposure, ground surface type. Defaults to ComfortParams().
 
     Returns
     -------
@@ -215,82 +174,32 @@ def _estimate_mrt(
     ta: np.ndarray,
     params: ComfortParams,
 ) -> np.ndarray:
-    """Estimate Mean Radiant Temperature from solar radiation data.
-
-    When direct-normal irradiance and solar position are available the MRT
-    includes the short-wave solar gain returned by pythermalcomfort's
-    solar_gain model. That model already contains a short-wave diffuse and
-    reflected surrogate, so we do not add a separate diffuse term on top of
-    it. Optional long-wave columns, if present, are converted to a linearized
-    MRT correction. When radiation data is absent, MRT defaults to ta
-    (full-shade approximation).
+    """Estimate Mean Radiant Temperature via the radiative flux balance in
+    comfort/mrt.py, from whatever radiation and cloud-cover data are
+    available in *df* (missing columns are treated as absent/NaN, which
+    calculate_outdoor_mrt reduces to a clear-sky, no-solar-gain baseline).
     """
-    mrt = ta.copy()
-
-    delta = np.zeros_like(ta)
-
-    dni = _get_col(df, "direct_normal_irradiance")
-    diff = _get_col(df, "diffuse_radiation")
+    rh = df["relative_humidity_2m"].to_numpy(dtype=float)
+    ghi = _col_or_nan(df, "shortwave_radiation", len(df))
+    dni = _col_or_nan(df, "direct_normal_irradiance", len(df))
+    dhi = _col_or_nan(df, "diffuse_radiation", len(df))
+    cloud_pct = _col_or_nan(df, "cloud_cover", len(df))
 
     # Solar position (pvlib, vectorised over the UTC timestamps)
     solar_pos = _solar_position(df.index, lat, lon)
     elevation = solar_pos["apparent_elevation"].to_numpy(dtype=float)
-    daylight = elevation > 0
 
-    if dni is not None and np.any(daylight & (dni > 0)):
-        idx = np.where(daylight & (dni > 0))[0]
-
-        sg = solar_gain(
-            sol_altitude=elevation[idx].tolist(),
-            # 90° = sun from the side (conservative default orientation)
-            sharp=[90.0] * len(idx),
-            sol_radiation_dir=dni[idx].tolist(),
-            sol_transmittance=[1.0] * len(idx),
-            f_svv=[1.0] * len(idx),
-            f_bes=[params.sun_exposure] * len(idx),
-            asw=ALPHA_SW,
-            posture=params.posture,
-            round_output=False,
-        )
-        delta[idx] += np.array(sg.delta_mrt, dtype=float)
-
-    elif diff is not None:
-        # Diffuse-only fallback when no direct-beam irradiance is available.
-        idx = np.where(daylight & (diff > 0))[0]
-        if idx.size:
-            ta_k = ta[idx] + 273.15
-            diff_delta = (
-                ALPHA_SW * 0.5 * diff[idx] / (4.0 * EPSILON_BODY * SIGMA * ta_k**3)
-            )
-            delta[idx] += np.nan_to_num(diff_delta, nan=0.0)
-
-    lw_down = _get_first_col(df, LONGWAVE_DOWNWARD_COLUMNS)
-    lw_up = _get_first_col(df, LONGWAVE_UPWARD_COLUMNS)
-    if lw_down is not None or lw_up is not None:
-        ta_k = ta + 273.15
-        sigma_t4 = SIGMA * ta_k**4
-        absorbed_lw = np.zeros_like(ta_k)
-
-        if lw_down is not None:
-            absorbed_lw += 0.5 * lw_down
-        else:
-            absorbed_lw += 0.5 * sigma_t4
-
-        if lw_up is not None:
-            absorbed_lw += 0.5 * lw_up
-        else:
-            absorbed_lw += 0.5 * sigma_t4
-
-        absorbed_lw -= sigma_t4
-        delta += np.nan_to_num(
-            absorbed_lw / (4.0 * EPSILON_BODY * SIGMA * ta_k**3),
-            nan=0.0,
-            posinf=0.0,
-            neginf=0.0,
-        )
-
-    mrt = ta + delta
-    return mrt
+    return calculate_outdoor_mrt(
+        ta=ta,
+        rh=rh,
+        ghi=ghi,
+        dni=dni,
+        dhi=dhi,
+        solar_elevation=elevation,
+        cloud_fraction=cloud_pct / 100.0,
+        sun_exposure=params.sun_exposure,
+        surface_type=params.surface_type,
+    )
 
 
 def _solar_position(index: pd.Index, lat: float, lon: float) -> pd.DataFrame:
@@ -298,20 +207,10 @@ def _solar_position(index: pd.Index, lat: float, lon: float) -> pd.DataFrame:
     return loc.get_solarposition(pd.DatetimeIndex(index))
 
 
-def _get_col(df: pd.DataFrame, col: str) -> Optional[np.ndarray]:
+def _col_or_nan(df: pd.DataFrame, col: str, length: int) -> np.ndarray:
     if col in df.columns:
-        arr = df[col].to_numpy(dtype=float)
-        if not np.all(np.isnan(arr)):
-            return arr
-    return None
-
-
-def _get_first_col(df: pd.DataFrame, candidates: tuple[str, ...]) -> Optional[np.ndarray]:
-    for col in candidates:
-        arr = _get_col(df, col)
-        if arr is not None:
-            return arr
-    return None
+        return df[col].to_numpy(dtype=float)
+    return np.full(length, np.nan)
 
 
 # ---------------------------------------------------------------------------

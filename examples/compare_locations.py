@@ -24,7 +24,7 @@ livorno     = Location(lat=43.5485, lon=10.3106,  name="Livorno")
 borgo       = Location(lat=43.9543, lon=11.3882,  name="Borgo San Lorenzo")
 
 # ── Scenario ───────────────────────────────────────────────────────────────
-params = ComfortParams(activity="walking", sun_exposure=0.5)
+params = ComfortParams(sun_exposure=0.5, surface_type="asphalt")
 
 # ── Example 1: "ieri alle 19 Firenze vs Livorno" ───────────────────────────
 yesterday = (pd.Timestamp.now("UTC") - pd.Timedelta(days=1)).strftime("%Y-%m-%d")

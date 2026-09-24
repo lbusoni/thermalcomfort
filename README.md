@@ -39,7 +39,7 @@ from thermalcomfort import ThermalComfortSystem, Location, ComfortParams
 
 tcs = ThermalComfortSystem()
 loc = Location(43.7696, 11.2558, "Florence")
-params = ComfortParams(activity="walking", sun_exposure=0.5)
+params = ComfortParams(sun_exposure=0.5, surface_type="asphalt")
 
 df = tcs.get(loc, "2024-07-01", "2024-07-03 23:00", params=params)
 tcs.plot(df, title="Florence")

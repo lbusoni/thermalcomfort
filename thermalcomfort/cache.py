@@ -80,6 +80,65 @@ class FileCache:
 
 
 # ---------------------------------------------------------------------------
+# Cache maintenance (provider-agnostic: acts on a cache directory directly,
+# not through a FileCache instance, so it also clears data left behind by
+# providers no longer in use).
+# ---------------------------------------------------------------------------
+
+def cache_contents(cache_dir: Optional[Path] = None) -> list[dict]:
+    """List cached weather-data files under *cache_dir* (default: DEFAULT_CACHE_DIR)."""
+    root = Path(cache_dir or DEFAULT_CACHE_DIR)
+    if not root.exists():
+        return []
+    rows = []
+    for provider_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        for f in sorted(provider_dir.glob("*.parquet")):
+            rows.append({
+                "provider": provider_dir.name,
+                "file": f.name,
+                "size_bytes": f.stat().st_size,
+            })
+    return rows
+
+
+def clear_cache(cache_dir: Optional[Path] = None) -> int:
+    """Delete every cached weather-data file under *cache_dir*.
+
+    Returns the number of files removed. Safe to call on an empty or
+    non-existent cache directory (returns 0).
+    """
+    root = Path(cache_dir or DEFAULT_CACHE_DIR)
+    if not root.exists():
+        return 0
+    removed = 0
+    for f in root.rglob("*.parquet"):
+        f.unlink()
+        removed += 1
+    logger.info("Cleared %d cache file(s) under %s", removed, root)
+    return removed
+
+
+def clear_location_cache(location: LocationInfo, cache_dir: Optional[Path] = None) -> int:
+    """Delete cached data for *location* across every provider under *cache_dir*.
+
+    Returns the number of files removed.
+    """
+    root = Path(cache_dir or DEFAULT_CACHE_DIR)
+    if not root.exists():
+        return 0
+    removed = 0
+    for provider_dir in root.iterdir():
+        if not provider_dir.is_dir():
+            continue
+        f = provider_dir / f"{location.cache_key()}.parquet"
+        if f.exists():
+            f.unlink()
+            removed += 1
+    logger.info("Cleared %d cache file(s) for %s under %s", removed, location, root)
+    return removed
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

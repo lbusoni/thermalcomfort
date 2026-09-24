@@ -26,8 +26,8 @@ thermalcomfort locations
 
 ## Common options
 
-- `--activity` = `resting|seated|standing|walking|walking_fast|hiking|cycling`
-- `--sun` = float in `0..1`
+- `--sun` = float in `0..1` (0 = full shade, 1 = full sun)
+- `--surface-type` = `asphalt|grass`
 - `--tz` = IANA timezone (for example `Europe/Rome`)
 - `--output|-o` = save plot to file
 - `--verbose|-v` = verbose logging
@@ -195,10 +195,11 @@ With explicit Mean Radiant Temperature:
 thermalcomfort calc --temp 25 --rh 60 --wind 2 --mrt 45
 ```
 
-With solar irradiance (MRT estimated automatically):
+With solar irradiance (MRT estimated automatically via the radiative flux
+balance, see [concepts.md](concepts.md#mrt-estimation)):
 
 ```bash
-thermalcomfort calc --temp 25 --rh 60 --wind 2 --solar 800 --solar-elevation 60
+thermalcomfort calc --temp 25 --rh 60 --wind 2 --ghi 850 --dni 800 --dhi 100 --solar-elevation 60
 ```
 
 Options:
@@ -208,16 +209,48 @@ Options:
 | `--temp` | `-T` | yes | Air temperature (°C) |
 | `--rh` | `-H` | yes | Relative humidity (%) |
 | `--wind` | `-W` | yes | Wind speed at 10 m height (m/s) |
-| `--mrt` | | no | Mean Radiant Temperature (°C). Default: = Ta (shade) |
-| `--solar` | | no | Direct Normal Irradiance (W/m²) — alternative MRT estimate |
-| `--solar-elevation` | | no | Solar elevation angle in degrees, used with `--solar` (default: 45) |
-| `--activity` | | no | Activity level (default: `walking`) |
+| `--mrt` | | no | Mean Radiant Temperature (°C), provided directly. Overrides the radiative estimate below |
+| `--ghi` | | no | Global horizontal irradiance, W/m² (default: 0) |
+| `--dni` | | no | Direct normal irradiance, W/m² (default: 0) |
+| `--dhi` | | no | Diffuse horizontal irradiance, W/m² (default: 0) |
+| `--solar-elevation` | | no | Solar elevation angle in degrees, used with `--dni`/`--ghi` (default: 45) |
+| `--cloud` | | no | Cloud cover, percent (default: 0, clear sky) |
+| `--surface-type` | | no | Ground surface: `asphalt` or `grass` (default: `asphalt`) |
 | `--sun` | | no | Sun exposure fraction 0–1 (default: 0.5) |
 
 MRT is determined in this priority order:
 
 1. `--mrt` if provided
-2. Estimated from `--solar` + `--solar-elevation` via the `solar_gain` model
-3. Default: MRT = Ta (full shade assumption)
+2. Otherwise, the radiative flux balance from `--ghi`/`--dni`/`--dhi`/`--solar-elevation`/`--cloud`/`--surface-type` (all optional — omitting the radiation flags gives a clear-sky, no-solar-gain estimate, not a flat MRT = Ta)
 
 Indices reported: UTCI (+ stress category), Heat Index (NOAA Rothfusz, valid only for T ≥ 27 °C and RH ≥ 40 %), Wind Chill (NWS, valid only for T ≤ 10 °C and wind ≥ 1.3 m/s), WBGT outdoor, wet-bulb temperature (Stull 2011).
+
+---
+
+## `cache`
+
+Inspect or clear the local weather-data cache (`~/.thermalcomfort_cache`).
+
+List cached files:
+
+```bash
+thermalcomfort cache
+```
+
+Clear everything (asks for confirmation):
+
+```bash
+thermalcomfort cache --clear
+```
+
+Clear specific locations only:
+
+```bash
+thermalcomfort cache --clear "Florence:43.7696,11.2558" Roma
+```
+
+Options:
+
+- `locations` (optional; with `--clear`, restricts it to these locations)
+- `--clear` — delete instead of listing
+- `--yes`, `-y` — skip the confirmation prompt
